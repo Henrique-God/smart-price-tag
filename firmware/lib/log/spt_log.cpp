@@ -36,7 +36,8 @@ void spt_log_write(char level, const char* tag, const char* fmt, ...) {
     va_end(args);
 
 #ifdef ARDUINO
-    Serial.printf("%c (%6lu) [%s] %s\n", level, uptime_ms(), tag, line);
+    // \r\n: terminais seriais "crus" (ex.: Wokwi) não voltam ao início da linha só com \n
+    Serial.printf("%c (%6lu) [%s] %s\r\n", level, uptime_ms(), tag, line);
 #else
     printf("%c (%6lu) [%s] %s\n", level, uptime_ms(), tag, line);
 #endif

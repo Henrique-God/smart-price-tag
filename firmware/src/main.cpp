@@ -34,7 +34,8 @@ void setup() {
 
     SPT_LOGI(TAG, "firmware %s", FW_VERSION);
     SPT_LOGI(TAG, "despertar: %s", power_wake_cause_name(power_wake_cause()));
-    SPT_LOGI(TAG, "etiqueta: %s", power_tag_id());
+    const char* tag_id = power_tag_id();
+    SPT_LOGI(TAG, "etiqueta: %s", tag_id[0] != '\0' ? tag_id : "(indisponível)");
 
     // TODO(F5): ciclo completo dentro de POWER_CYCLE_DEADLINE_MS:
     //   store_load -> net_connect/net_sync_time -> mqtt_connect/mqtt_fetch_config

@@ -27,6 +27,8 @@ const char* power_wake_cause_name(WakeCause cause);
 // Identificador da etiqueta: 12 caracteres hex minúsculos do MAC station
 // (ex.: "a4cf12ab34cd"). Usado nos tópicos spt/{id}/... e como usuário MQTT.
 // Retorna ponteiro para buffer estático, válido durante todo o ciclo.
+// Se o MAC não puder ser lido ou for inválido (todo zero), retorna "" e
+// registra erro: a etiqueta não deve se conectar ao broker sem um ID válido.
 const char* power_tag_id();
 
 // Tensão da bateria em mV, já compensando o divisor. 0 se a leitura falhar.
