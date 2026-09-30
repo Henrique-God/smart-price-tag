@@ -1,0 +1,8 @@
+# Copy to data/broker/acl. Add a user block for every provisioned tag.
+user spt-app
+topic write spt/+/config
+topic read spt/+/status
+
+user A1B2C3D4E5F6
+topic read spt/A1B2C3D4E5F6/config
+topic write spt/A1B2C3D4E5F6/status

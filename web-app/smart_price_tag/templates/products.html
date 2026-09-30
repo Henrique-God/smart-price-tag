@@ -5,7 +5,7 @@
   <div><p class="eyebrow">Gerenciamento</p><h1>Produtos</h1><p class="muted">Preços e promoções salvos neste computador.</p></div>
   <a class="button button-primary" href="/produtos/novo">Novo produto</a>
 </div>
-<div class="info-banner" role="note"><strong>Visor sem confirmação.</strong> As alterações abaixo estão apenas no catálogo local. Envio e telemetria ainda não estão disponíveis.</div>
+<div class="info-banner" role="note">{% if mqtt_enabled %}As alterações em produtos vinculados são preparadas para publicação MQTT. Consulte <a href="/etiquetas">Etiquetas</a> para ver a publicação e a confirmação recebida.{% else %}MQTT não configurado. As alterações permanecem no catálogo local.{% endif %}</div>
 {% if products %}
 <div class="card table-wrap">
   <table>

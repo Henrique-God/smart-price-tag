@@ -1,6 +1,7 @@
 """Server-rendered routes for the management application."""
 
 import secrets
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from . import catalog
 from .authentication import authenticate
 from .config import Settings
 from .db import AdminUser, Product, Tag, create_tables, make_engine
+from .mqtt import MqttService
 
 
 ROOT = Path(__file__).parent
@@ -28,8 +30,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     engine = make_engine(settings.database_path)
     create_tables(engine)
-    app = FastAPI(title="Smart Price Tag")
+    mqtt_service = MqttService(engine, settings) if settings.mqtt_host else None
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        if mqtt_service:
+            mqtt_service.start()
+        try:
+            yield
+        finally:
+            if mqtt_service:
+                mqtt_service.stop()
+
+    app = FastAPI(title="Smart Price Tag", lifespan=lifespan)
     app.state.engine = engine
+    app.state.mqtt_service = mqtt_service
     app.add_middleware(
         SessionMiddleware,
         secret_key=settings.session_secret,
@@ -54,6 +69,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if message and request:
             request.session["flash_message"] = message
         return RedirectResponse(path, status_code=303)
+
+    def catalog_changed() -> str:
+        if mqtt_service is None:
+            return " MQTT não configurado; alteração salva somente no catálogo."
+        mqtt_service.notify_change()
+        return " Configuração preparada para publicação MQTT; veja a situação em Etiquetas."
 
     def require_login(request: Request):
         user_id = request.session.get("user_id")
@@ -118,7 +139,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return denied
         with Session(engine) as session:
             products = session.exec(select(Product).order_by(Product.name, Product.id)).all()
-        return render(request, "products.html", products=products, now=int(datetime.now(timezone.utc).timestamp()))
+        return render(request, "products.html", products=products, now=int(datetime.now(timezone.utc).timestamp()), mqtt_enabled=mqtt_service is not None)
 
     def product_form(request: Request, *, title: str, action: str, values: dict, error: str | None = None, status_code: int = 200):
         return render(request, "product_form.html", status_code=status_code, title=title, action=action, values=values, error=error)
@@ -142,7 +163,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 catalog.save_product(session, product_id=None, **values)
         except catalog.CatalogError as error:
             return product_form(request, title="Novo produto", action="/produtos/novo", values=values, error=str(error), status_code=400)
-        return redirect("/produtos", "Produto salvo no catálogo. Nenhuma atualização foi enviada à etiqueta.", request)
+        return redirect("/produtos", "Produto salvo no catálogo." + catalog_changed(), request)
 
     @app.get("/produtos/{product_id}/editar", response_class=HTMLResponse)
     def edit_product_form(request: Request, product_id: int):
@@ -168,7 +189,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 catalog.save_product(session, product_id=product_id, **values)
         except catalog.CatalogError as error:
             return product_form(request, title="Editar produto", action=f"/produtos/{product_id}/editar", values=values, error=str(error), status_code=400)
-        return redirect("/produtos", "Produto atualizado no catálogo. Nenhuma atualização foi enviada à etiqueta.", request)
+        return redirect("/produtos", "Produto atualizado no catálogo." + catalog_changed(), request)
 
     @app.post("/produtos/{product_id}/excluir")
     async def delete_product(request: Request, product_id: int):
@@ -213,7 +234,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 catalog.save_promotion(session, product_id, **values)
             except catalog.CatalogError as error:
                 return render(request, "promotion_form.html", status_code=400, product=product, values=values, error=str(error))
-        return redirect("/produtos", "Promoção salva no catálogo. Nenhuma atualização foi enviada à etiqueta.", request)
+        return redirect("/produtos", "Promoção salva no catálogo." + catalog_changed(), request)
 
     @app.post("/produtos/{product_id}/promocao/remover")
     async def remove_promotion(request: Request, product_id: int):
@@ -226,14 +247,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 catalog.remove_promotion(session, product_id)
         except catalog.CatalogError as error:
             return redirect("/produtos", str(error), request)
-        return redirect("/produtos", "Promoção removida do catálogo. Nenhuma atualização foi enviada à etiqueta.", request)
+        return redirect("/produtos", "Promoção removida do catálogo." + catalog_changed(), request)
 
     def tag_page(request: Request, *, error: str | None = None, identifier: str = "", status_code: int = 200):
         with Session(engine) as session:
             tags = session.exec(select(Tag).order_by(Tag.identifier)).all()
             products = session.exec(select(Product).order_by(Product.name, Product.id)).all()
             product_names = {product.id: product.name for product in products}
-        return render(request, "tags.html", status_code=status_code, tags=tags, products=products, product_names=product_names, error=error, identifier=identifier)
+        return render(request, "tags.html", status_code=status_code, tags=tags, products=products, product_names=product_names, error=error, identifier=identifier, mqtt_enabled=mqtt_service is not None, broker_connected=bool(mqtt_service and mqtt_service.connected.is_set()))
 
     @app.get("/etiquetas", response_class=HTMLResponse)
     def list_tags(request: Request):
@@ -254,7 +275,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 catalog.register_tag(session, identifier)
         except catalog.CatalogError as error:
             return tag_page(request, error=str(error), identifier=identifier, status_code=400)
-        return redirect("/etiquetas", "Etiqueta cadastrada no catálogo. A comunicação com o visor ainda não está disponível.", request)
+        return redirect("/etiquetas", "Etiqueta cadastrada no catálogo." + catalog_changed(), request)
 
     @app.post("/etiquetas/{identifier}/vinculo")
     async def change_link(request: Request, identifier: str):
@@ -270,6 +291,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 catalog.link_product(session, identifier, int(value) if value else None)
         except catalog.CatalogError as error:
             return redirect("/etiquetas", str(error), request)
-        return redirect("/etiquetas", "Vínculo salvo no catálogo. Nenhuma atualização foi enviada à etiqueta.", request)
+        return redirect("/etiquetas", "Vínculo salvo no catálogo." + catalog_changed(), request)
 
     return app

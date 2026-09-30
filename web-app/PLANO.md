@@ -1,67 +1,64 @@
 # Plano do Smart Price Tag
 
-Fonte: leitura integral de `../main (1).pdf` (36 páginas), especialmente os Quadros 1 e 2 do capítulo 2, a Figura 5 e o Quadro 6. Os IDs abaixo seguem **as tabelas do capítulo 2**; algumas remissões no texto posterior da monografia trocam os números dos RNF.
+Fonte: `../main (1).pdf`, sobretudo os Quadros 1 e 2 do capítulo 2 e as seções 3.3.2, 3.4 e 3.6. **Os IDs abaixo seguem as tabelas do capítulo 2**; as remissões no texto posterior trocam alguns RNF.
 
-## Macrotarefas e critérios de conclusão
+## Etapas
 
-| Etapa | Macrotarefa | Critério de conclusão | Estado nesta entrega |
-|---|---|---|---|
-| E1 | Estrutura, banco e configuração da aplicação | FastAPI/Jinja2/Uvicorn e SQLModel/SQLite iniciam com configuração externa e dados persistentes | **Concluída** |
-| E2 | Autenticação e proteção da interface | Primeiro administrador criado sem senha padrão; bcrypt, sessão e proteção das alterações verificadas | **Concluída** |
-| E3 | Catálogo e interface web | Produtos, etiquetas, vínculos e promoções gerenciáveis em páginas acessíveis, com validação e testes da aplicação | **Concluída** |
-| E4 | Comunicação e segurança entre aplicação e etiqueta | Mosquitto com credenciais/ACL; futuros módulos `mqtt`, `security` e `publisher` publicam configurações retidas autenticadas; HTTPS configurado | TODO — MQTT/broker |
-| E5 | Monitoramento e confirmação | Módulo `monitor` recebe estados reais; mostra bateria, última comunicação e comparação entre versão publicada e confirmada | TODO — monitoramento/MQTT |
-| E6 | Hardware e firmware da etiqueta | Circuito montado; firmware modular executa ciclo, layouts, código EAN-13, promoção, autenticação e economia de energia | TODO — firmware/hardware |
-| E7 | Ensaios isolados e integração | Testes da comunicação, firmware e sistema real demonstram entrega, confirmação, prazos, legibilidade e autonomia estimada | TODO — testes de integração/hardware |
-
-**Regra de estado:** nesta etapa, salvar uma alteração no SQLite significa apenas “salvo no catálogo”. Não existe publicação MQTT nem confirmação pelo visor. A interface não mostra “aplicada”, “pendente” ou telemetria inventada.
+| Etapa | Resultado nesta entrega | Pendente |
+|---|---|---|
+| E1 — estrutura e banco | FastAPI/Jinja2/SQLite, migração das colunas MQTT de `etiqueta` preservando bancos antigos | — |
+| E2 — administrador | Login, bcrypt, sessão e CSRF testados | — |
+| E3 — catálogo | Produtos, etiquetas, vínculos e promoções testados | — |
+| E4 — comunicação | Mosquitto com senha e ACL testado; aplicação monta HMAC, sequência e publicação retida com recuperação após reconexão | Provisionamento e autenticação no firmware; operação na LAN real |
+| E5 — monitoramento | Estados MQTT válidos persistidos; interface separa publicação, espera e versão confirmada | Validação com estados da etiqueta física e prova de aplicação no visor |
+| E6 — firmware/hardware | — | Toda a implementação e montagem |
+| E7 — integração | Teste automatizado com broker Mosquitto temporário e clientes de teste | Ensaios com firmware, visor, botão, consumo e prazos |
 
 ## Matriz de requisitos
 
-| ID | Resumo do requisito (Quadros 1 e 2) | Etapa(s) | Estado nesta entrega |
-|---|---|---|---|
-| RF01 | CRUD de produtos com nome, preço, descrição curta e EAN-13 | E1, E3 | **Concluído** |
-| RF02 | Cadastro de etiqueta e vínculo/desvínculo de um produto | E1, E3 | **Concluído** |
-| RF03 | Configuração de promoção, preço e término | E1, E3 | **Concluído** |
-| RF04 | Entrega de alterações no despertar seguinte | E4, E6, E7 | TODO |
-| RF05 | Autenticação antes de alterações | E2 | **Concluído** |
-| RF06 | Estado aplicado, bateria e última comunicação | E4, E5, E7 | TODO |
-| RF07 | Ciclo completo da etiqueta a cada despertar | E6, E7 | TODO |
-| RF08 | Despertar imediato pelo botão | E6, E7 | TODO |
-| RF09 | Visor com produto, preço, descrição e EAN-13 | E6, E7 | TODO |
-| RF10 | Layout promocional com preço anterior riscado e vermelho | E6, E7 | TODO |
-| RF11 | Reversão local ao expirar promoção | E6, E7 | TODO |
-| RF12 | Publicação de estado pela etiqueta | E4, E5, E6, E7 | TODO |
-| RF13 | Manter última imagem válida em falha de rede/broker | E6, E7 | TODO |
-| RNF01 | Autonomia estimada ≥ 180 dias nas condições da tabela | E6, E7 | TODO |
-| RNF02 | Redesenho completo ≤ 30 s | E6, E7 | TODO |
-| RNF03 | Ciclo sem redesenho ≤ 10 s | E6, E7 | TODO |
-| RNF04 | Atualização no visor ≤ 24 h ou ≤ 45 s pelo botão | E4, E6, E7 | TODO |
-| RNF05 | E-paper de 2,9", 296 × 128, três cores | E6, E7 | TODO |
-| RNF06 | Dígitos do preço ≥ 10 mm, legíveis a 1,5 m | E6, E7 | TODO |
-| RNF07 | EAN-13 preto, legível de 10 a 25 cm | E6, E7 | TODO |
-| RNF08 | Deep sleep em todos os caminhos, ciclo ≤ 60 s | E6, E7 | TODO |
-| RNF09 | Broker exige usuário e senha | E4, E7 | TODO |
-| RNF10 | ACL por etiqueta para tópicos de configuração e estado | E4, E7 | TODO |
-| RNF11 | Senhas armazenadas somente como hash | E1, E2 | **Concluído** |
-| RNF12 | Etiqueta rejeita configuração falsa ou antiga | E4, E6, E7 | TODO |
-| RNF13 | Bateria Li-Po ≥ 1200 mAh com proteção | E6, E7 | TODO |
+| ID | Requisito dos Quadros 1 e 2 | Situação comprovada |
+|---|---|---|
+| RF01 | CRUD de produtos, nome, preço, descrição, EAN-13 | Concluído na aplicação |
+| RF02 | Cadastro e vínculo/desvínculo de etiquetas | Concluído na aplicação |
+| RF03 | Promoção com preço e término | Concluído na aplicação |
+| RF04 | Entrega no despertar seguinte | Parcial: configuração retida e reconexão verificadas no broker; despertar real TODO |
+| RF05 | Autenticação antes de alterações | Concluído na aplicação |
+| RF06 | Estado aplicado, bateria e última comunicação | Parcial: persistência/interface com estados MQTT de teste; confirmação física TODO |
+| RF07 | Ciclo completo a cada despertar | TODO — firmware/hardware |
+| RF08 | Botão executa o mesmo ciclo | TODO — firmware/hardware |
+| RF09 | Nome, preço, descrição e EAN-13 no visor | TODO — firmware/hardware |
+| RF10 | Layout promocional, preço anterior riscado e vermelho | TODO — firmware/hardware |
+| RF11 | Reversão local ao expirar promoção | TODO — firmware/hardware |
+| RF12 | Publicação de estado pela etiqueta | TODO — firmware/hardware; receptor web testado com mensagem sintética |
+| RF13 | Última imagem válida em falha de rede/broker | TODO — firmware/hardware |
+| RNF01 | Autonomia estimada ≥ 180 dias nas condições da tabela | TODO — hardware/ensaio |
+| RNF02 | Redesenho completo ≤ 30 s | TODO — firmware/hardware |
+| RNF03 | Ciclo sem redesenho ≤ 10 s | TODO — firmware/hardware |
+| RNF04 | Atualização ≤ 24 h ou ≤ 45 s pelo botão | TODO — firmware/hardware/ensaio |
+| RNF05 | E-paper 2,9", 296 × 128, três cores | TODO — hardware |
+| RNF06 | Dígitos do preço ≥ 10 mm, legíveis a 1,5 m | TODO — hardware/ensaio |
+| RNF07 | EAN-13 preto, legível de 10 a 25 cm | TODO — hardware/ensaio |
+| RNF08 | Deep sleep em todos os caminhos, ciclo ≤ 60 s | TODO — firmware/hardware |
+| RNF09 | Broker exige usuário e senha | Concluído na configuração e no teste Mosquitto local |
+| RNF10 | ACL limita cada etiqueta aos próprios tópicos | Concluído na configuração e no teste Mosquitto local |
+| RNF11 | Senhas de usuários somente como hash | Concluído para administrador e arquivo de senhas Mosquitto |
+| RNF12 | Etiqueta descarta configuração falsa ou antiga | Parcial: app produz HMAC e sequência; rejeição no firmware TODO |
+| RNF13 | Bateria Li-Po ≥ 1200 mAh protegida | TODO — hardware |
 
-## Decisões de implementação desta entrega
+## Contrato implementado nesta entrega
 
-- A promoção fica nos campos de `produto`, como no Quadro 6. Seu instante de expiração é persistido em segundos Unix UTC; o formulário apresenta e recebe o horário explicitamente em UTC.
-- Preços são números inteiros em centavos no SQLite; a interface recebe valores decimais com duas casas e vírgula ou ponto.
-- O identificador da etiqueta é o MAC de 12 dígitos hexadecimais, normalizado em maiúsculas sem separadores, seguindo a seção 3.4.2.
-- A exclusão de produto vinculado é recusada até o desvínculo, para evitar referência órfã.
-- O primeiro administrador é criado por comando local interativo, que só funciona enquanto não houver usuário; não há conta nem senha embutida.
-- A aplicação exige uma chave de sessão fornecida por variável de ambiente. Em produção, o navegador deve acessar o servidor por HTTPS e os cookies devem usar a opção `Secure`.
-- Os identificadores do código e os nomes dos módulos (`web`, `authentication`, `catalog`, `db`) são em inglês. Os nomes das tabelas e colunas SQLite existentes foram preservados para manter os catálogos locais compatíveis.
-- A interface Jinja2/CSS e os serviços Python estão separados por responsabilidade dentro da mesma aplicação FastAPI; não existe frontend independente.
-- A aplicação web e sua documentação ficam em `web-app/`. O futuro firmware do ESP32 deve ficar em `firmware/`, como pasta irmã; segredos e dados locais nunca devem ser commitados no repositório público.
+- `publisher` serializa `produto` e `promocao`, deriva uma versão SHA-256 curta do conteúdo, incrementa `seq` quando ele muda e grava envelope `dados`/`hmac` no SQLite. Sem produto, ambos são `null`. A última configuração desejada fica disponível para republicação após falhas.
+- `security` deriva a chave individual por HMAC-SHA256 da mestra e do MAC e trunca o HMAC da mensagem em 128 bits. A chave mestra vem de ambiente; o provisionamento grava chaves individuais em arquivos locais ignorados.
+- `mqtt` assina `spt/+/status`, publica com QoS 1 e `retain=true`, grava versão publicada após confirmação do broker e republica na reconexão/inicialização. Usa sessão limpa, sem Last Will. Execute somente um processo web conectado ao broker.
+- `monitor` valida tópico, esquema, tamanho, intervalos e instante dos estados, grava bateria, RSSI, firmware, instante e versão confirmada. Estado antigo não substitui estado novo. A página calcula “Aplicada” quando a versão confirmada coincide com a publicada e o estado foi recebido para a sequência atual.
+- A migração SQLite adiciona colunas a `etiqueta` sem trocar os nomes das tabelas/colunas anteriores. Dados locais continuam fora do Git.
 
-## Verificação desta entrega
+## Verificação
 
-- [x] PDF e diagramas lidos; IDs conferidos com as tabelas do capítulo 2.
-- [x] Aplicação e testes de autenticação e catálogo implementados.
-- [x] Testes automatizados executados com sucesso: `python -m pytest -q` — 4 testes passaram, inclusive leitura de banco com esquema anterior (1 aviso de depreciação na dependência de teste Starlette/httpx).
-- [ ] MQTT, broker, publicador, monitor, segurança das mensagens, firmware, hardware e testes de integração permanecem para as etapas E4–E7.
+- [x] Monografia lida; IDs conferidos com os Quadros 1 e 2.
+- [x] Testes de autenticação e catálogo anteriores continuam passando.
+- [x] Testes de serialização, HMAC exato, versão, sequência e validação de estados passaram.
+- [x] Teste de integração com Mosquitto 2.1.2 instalado localmente passou: autenticação, ACL de leitura/escrita, configuração retida, estado MQTT sintético, atualização depois de derrubar/reiniciar o broker e recusa de ACK para publicação não autorizada.
+- [ ] Teste com etiqueta ESP32 real, aceitação/rejeição HMAC e sequência no firmware, confirmação do visor, autonomia e limites de tempo.
+
+Comando executado: `.\.venv\Scripts\python -m pytest -q`. O aviso de depreciação é da combinação Starlette/httpx usada pelo cliente de teste.

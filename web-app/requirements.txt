@@ -5,4 +5,4 @@ python-multipart>=0.0.20,<1
 itsdangerous>=2.2,<3
 bcrypt>=4.2,<5
 sqlmodel>=0.0.24,<0.1
-
+paho-mqtt>=2.1,<3

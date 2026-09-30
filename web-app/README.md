@@ -1,96 +1,92 @@
-# Smart Price Tag — primeira etapa
+# Smart Price Tag — aplicação web e MQTT
 
-Aplicação web de gerenciamento baseada na arquitetura de `../main (1).pdf`: Python, FastAPI, páginas Jinja2, Uvicorn, SQLModel e SQLite. Esta entrega cobre login, produtos, etiquetas, vínculos e promoções. Alterações são persistidas **somente no catálogo local**; ainda não há MQTT, confirmação do visor ou telemetria.
+Aplicação FastAPI/Jinja2/SQLite baseada em `../main (1).pdf`. Esta entrega implementa a parte web da comunicação: configuração MQTT retida, autenticação HMAC, fila persistente no SQLite, recebimento de estados e indicação de publicação/aplicação. **Nenhum firmware ou visor real foi validado.** A futura pasta `firmware/` fica ao lado de `web-app/`.
 
-Os nomes internos do código, inclusive os módulos `authentication` e `catalog`, estão em inglês. O esquema SQLite existente é preservado. Textos da interface e mensagens de validação permanecem em português.
+Os módulos seguem as responsabilidades da seção 3.3.2: `web` apresenta e controla sessão; `authentication` valida administrador; `catalog` aplica regras de produto, etiqueta e promoção; `db` persiste; `publisher` monta configurações; `security` deriva chaves e assina; `mqtt` mantém a conexão e republica; `monitor` valida e grava estados.
 
-## Organização do repositório e arquitetura
+## Instalação da aplicação
 
-```text
-smart-price-tag/
-├── .gitignore                 # proteção para todo o repositório
-├── main (1).pdf              # referência da monografia
-├── web-app/                  # aplicação web, documentação e testes desta etapa
-│   ├── README.md
-│   ├── PLANO.md
-│   ├── requirements.txt
-│   ├── requirements-dev.txt
-│   ├── smart_price_tag/      # código Python, templates e CSS
-│   ├── tests/
-│   ├── data/                 # banco local, ignorado pelo Git
-│   └── .venv/                # ambiente local, ignorado pelo Git
-└── firmware/                 # futuro código executado no ESP32; ainda não existe
-```
-
-Todo código, dependência, teste e documentação da aplicação web deve permanecer em `web-app/`. O futuro código do ESP32 deve ficar em `firmware/`, como pasta irmã. Não recrie a antiga pasta `frontend/`.
-
-A interface e o servidor estão separados por responsabilidade dentro de **uma única aplicação**, conforme a monografia. A interface usa `smart_price_tag/templates/` (HTML/Jinja2) e `smart_price_tag/static/` (CSS). No servidor, `web.py` cuida das rotas, sessões e renderização; `authentication.py` cuida das credenciais; `catalog.py` aplica as regras do catálogo; e `db.py` define a persistência SQLite. O Uvicorn executa a aplicação FastAPI. Não há frontend separado nem serviço React.
-
-## Instalação local (PowerShell)
-
-Requer Python 3.12 ou superior. A partir da raiz `smart-price-tag`, entre em `web-app` antes de instalar ou executar:
+Python 3.12 ou superior. Execute a partir de `web-app/`:
 
 ```powershell
-cd .\web-app
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
-```
-
-Defina um caminho para o banco e uma chave aleatória de sessão. A chave deve ter pelo menos 32 caracteres e permanecer fora do repositório. O comando abaixo gera uma chave nova para este terminal:
-
-```powershell
+New-Item -ItemType Directory -Force data,secrets | Out-Null
 $env:SPT_DB_PATH = "data/smart_price_tag.db"
 $env:SPT_SESSION_SECRET = python -c "import secrets; print(secrets.token_urlsafe(48))"
-$env:SPT_SECURE_COOKIES = "false"  # somente para HTTP local
+$env:SPT_SECURE_COOKIES = "false" # só para HTTP local
+python -m smart_price_tag.authentication # cria o primeiro administrador, com senha interativa
 ```
 
-Crie o primeiro administrador **uma única vez**, digitando a senha interativamente. A senha deve ter no mínimo 12 caracteres e no máximo 72 bytes UTF-8. Não há senha padrão nem endpoint web de cadastro administrativo:
+O comando de administrador só funciona antes da primeira conta. Em uso de rede, sirva o web app por HTTPS e use `SPT_SECURE_COOKIES=true` (por exemplo, Uvicorn com `--ssl-certfile` e `--ssl-keyfile` apontando para arquivos privados locais).
+
+## Instalação do Mosquitto e provisionamento
+
+Instale o [Mosquitto](https://mosquitto.org/download/) 2.1 ou superior. No Windows, o instalador oficial coloca `mosquitto.exe` e `mosquitto_passwd.exe` em `C:\Program Files\mosquitto\`. Em Debian/Ubuntu, instale os pacotes `mosquitto` e `mosquitto-clients` do sistema. Os exemplos abaixo são PowerShell e devem ser executados em `web-app/`.
+
+1. Crie `data/broker/` (ignorado pelo Git), copie [`broker/mosquitto.conf.example`](broker/mosquitto.conf.example) para `data/broker/mosquitto.conf` e [`broker/acl.example`](broker/acl.example) para `data/broker/acl`. O exemplo escuta apenas em `127.0.0.1`; antes de conectar etiquetas reais, altere o `listener` para o IP da interface da LAN confiável e restrinja a porta no firewall. Não exponha a porta MQTT à internet. O arquivo de ACL contém um ID ilustrativo: substitua por etiquetas provisionadas.
+
+2. Crie senhas únicas e longas, digitadas interativamente; a primeira opção `-c` cria o arquivo, e as próximas acrescentam usuários. O arquivo contém hashes, mas permanece privado. O usuário da aplicação é `spt-app`; o de cada etiqueta é exatamente seu identificador MAC em 12 hexadecimais maiúsculos.
 
 ```powershell
-python -m smart_price_tag.authentication
+New-Item -ItemType Directory -Force data/broker,secrets | Out-Null
+if (!(Test-Path data/broker/mosquitto.conf)) { Copy-Item broker/mosquitto.conf.example data/broker/mosquitto.conf }
+if (!(Test-Path data/broker/acl)) { Copy-Item broker/acl.example data/broker/acl }
+if (Test-Path data/broker/passwords) { throw "Arquivo de senhas já existe; não use -c novamente." }
+& "C:\Program Files\mosquitto\mosquitto_passwd.exe" -c data/broker/passwords spt-app
+& "C:\Program Files\mosquitto\mosquitto_passwd.exe" data/broker/passwords A1B2C3D4E5F6
 ```
 
-Inicie a aplicação:
+3. Para **cada** etiqueta, acrescente ao `data/broker/acl` um bloco `user ID`, `topic read spt/ID/config`, `topic write spt/ID/status`, usando o mesmo ID nos três lugares. A aplicação possui apenas `topic write spt/+/config` e `topic read spt/+/status`. Reinicie o broker após editar as ACLs; remova a credencial e o bloco de uma etiqueta desativada. O exemplo de ACL já inclui o ID ilustrativo acima.
+
+4. Gere uma única chave mestra aleatória de 32 bytes e guarde-a em `secrets/master.key`, fora do Git. A derivação HMAC-SHA256 por MAC produz a chave individual; o comando abaixo grava somente a chave da etiqueta indicada em `secrets/ID.key`. Entregue essa chave e a senha MQTT correspondente ao processo privado de compilação/provisionamento daquela etiqueta. Nunca coloque a mestra no firmware nem inclua esses valores em logs, imagens públicas ou commits.
 
 ```powershell
+if (Test-Path secrets/master.key) { throw "Chave mestra já existe; não a substitua." }
+python -c "import secrets; print(secrets.token_hex(32))" | Set-Content secrets/master.key
+$env:SPT_MQTT_MASTER_KEY = (Get-Content secrets/master.key -Raw).Trim()
+python -m smart_price_tag.security A1B2C3D4E5F6
+```
+
+**Guarde e faça backup privado de `secrets/master.key`, do banco e dos arquivos do broker.** Se a chave mestra mudar, as etiquetas existentes precisarão ser reprovisionadas; configurações antigas não poderão ser verificadas com a nova chave. Proteja `data/` e `secrets/` com permissões do sistema operacional somente para o serviço e o administrador. A monografia usa MQTT sem TLS na LAN WPA2: a senha MQTT trafega em texto claro nessa rede. Use uma rede isolada e confiável; para rede não confiável, configure TLS no Mosquitto e nos clientes antes de operar. O HMAC autentica a configuração, mas não cifra o tráfego.
+
+5. Inicie o broker em outro terminal. No primeiro terminal, configure a aplicação com a senha `spt-app` digitada sem eco e execute um único processo Uvicorn (o publicador usa um único processo dono da conexão MQTT):
+
+O instalador Windows pode iniciar um serviço Mosquitto padrão. Se a porta 1883 já estiver em uso, pare esse serviço com privilégios de administrador antes de iniciar a instância com `data/broker/mosquitto.conf`, ou configure outra porta no broker e em `SPT_MQTT_PORT`.
+
+```powershell
+& "C:\Program Files\mosquitto\mosquitto.exe" -c data/broker/mosquitto.conf -v
+```
+
+```powershell
+$env:SPT_MQTT_HOST = "127.0.0.1"
+$env:SPT_MQTT_PORT = "1883"
+$env:SPT_MQTT_USERNAME = "spt-app"
+$secure = Read-Host "Senha MQTT da aplicação" -AsSecureString
+$env:SPT_MQTT_PASSWORD = [System.Net.NetworkCredential]::new('', $secure).Password
+$env:SPT_MQTT_MASTER_KEY = (Get-Content secrets/master.key -Raw).Trim()
 python -m uvicorn smart_price_tag.web:create_app --factory --host 127.0.0.1 --port 8000
 ```
 
-Acesse `http://127.0.0.1:8000/login`. O banco é criado automaticamente no caminho de `SPT_DB_PATH` e permanece entre execuções. Se o caminho não for definido, usa `data/smart_price_tag.db`.
+Se qualquer variável MQTT estiver definida, as quatro `SPT_MQTT_HOST`, `SPT_MQTT_USERNAME`, `SPT_MQTT_PASSWORD` e `SPT_MQTT_MASTER_KEY` são obrigatórias; `SPT_MQTT_PORT` é opcional (padrão 1883). Sem elas, o catálogo continua utilizável e a interface indica MQTT não configurado. `SPT_DB_PATH`, `SPT_SESSION_SECRET` e `SPT_SECURE_COOKIES` seguem a configuração web anterior.
 
-## Configuração e segurança
+## Contrato e situação exibida
 
-| Variável | Função | Padrão |
-|---|---|---|
-| `SPT_DB_PATH` | Caminho do arquivo SQLite | `data/smart_price_tag.db` |
-| `SPT_SESSION_SECRET` | Assina o cookie de sessão; mínimo 32 caracteres | Obrigatória para o servidor |
-| `SPT_SECURE_COOKIES` | `true` exige HTTPS no cookie; `false` permite HTTP local | `true` |
+- O servidor publica `spt/{id}/config` com QoS 1 e `retain=true`. `dados` é uma **string JSON exata**, em UTF-8; `hmac` são os primeiros 16 bytes de HMAC-SHA256 sobre essa string, em hexadecimal. A chave da etiqueta é `HMAC-SHA256(chave_mestra, ID_ASCII)`.
+- `dados` contém `produto` (ou `null`), `promocao` (ou `null`), `versao` e `seq`. Preços são inteiros em centavos; `expira_em` é Unix UTC. A versão são os 8 primeiros hexadecimais de SHA-256 do conteúdo `produto`/`promocao` serializado de forma estável. A sequência cresce a cada configuração diferente da etiqueta. Conteúdo igual mantém a versão e evita novo redesenho.
+- O servidor assina `spt/+/status` e aceita JSON com `versao`, `tensao_mv`, `rssi`, `firmware` e `instante` de uma etiqueta cadastrada. Estados inválidos, muito grandes ou com instante antigo são ignorados. A interface preserva a última versão informada; **“Aplicada” só aparece após um estado recebido para a sequência atual, com versão igual à configuração publicada mais recente**.
+- A publicação confirmada pelo broker é diferente da aplicação no visor. Enquanto o broker está fora, a nova configuração fica gravada no SQLite como publicação pendente. Na reconexão, o servidor publica a configuração mais recente como retida; na inicialização também a republica para recuperar eventual perda dos dados retidos pelo broker. Mantenha `persistence true` no broker.
 
-Em rede ou produção, sirva a aplicação por HTTPS, mantenha `SPT_SECURE_COOKIES=true`, proteja a chave de sessão e o arquivo SQLite e use um certificado confiável para os clientes. O acesso local via HTTP acima é apenas para desenvolvimento. O navegador recebe um cookie de sessão assinado, `HttpOnly` e `SameSite=Strict`; os formulários de alteração e de login têm token CSRF. O comando inicial se recusa a criar outra conta após a primeira.
+Os IDs seguem os Quadros 1 e 2 da monografia, inclusive RNF09 (login obrigatório no broker), RNF10 (ACL por etiqueta) e RNF12 (rejeição de configuração falsa/antiga pelo **futuro firmware**). Remissões posteriores da monografia trocam alguns números.
 
-Para executar o Uvicorn com um certificado e uma chave TLS já gerados (por exemplo, com `mkcert` para uma demonstração local), use:
-
-```powershell
-$env:SPT_SECURE_COOKIES = "true"
-python -m uvicorn smart_price_tag.web:create_app --factory --host 127.0.0.1 --port 8000 --ssl-certfile certs/localhost.pem --ssl-keyfile certs/localhost-key.pem
-```
-
-O certificado e a chave privada devem ficar fora do controle de versão. Configure o nome/host do certificado de acordo com o endereço usado no navegador.
-
-### Regra para agentes e colaboradores: repositório público
-
-**Nunca adicione nem faça commit de arquivos ou valores sigilosos.** Isso inclui senhas, tokens, chaves de sessão/MQTT, certificados privados, credenciais Wi-Fi, arquivos `.env*`, bancos SQLite e dados reais de clientes. Use variáveis de ambiente e arquivos locais ignorados pelo `.gitignore` da raiz. A regra vale para `web-app/` e para a futura pasta `firmware/`; antes de qualquer commit, confira os arquivos preparados com `git diff --cached --name-only` e revise seu conteúdo com `git diff --cached`.
-
-O `.gitignore` cobre `.venv/`, `data/`, bancos SQLite, `.env*`, `certs/` e formatos comuns de chaves e credenciais. Ele não substitui a revisão do que será versionado.
-
-As datas de promoção são inseridas e exibidas **em UTC**. Preços são armazenados em centavos inteiros. O identificador da etiqueta é um MAC de 12 dígitos hexadecimais, normalizado sem separadores. A exclusão de produto vinculado requer desvincular antes.
-
-## Testes
+## Testes e sigilo
 
 ```powershell
 python -m pip install -r requirements-dev.txt
 python -m pytest -q
 ```
 
-Os testes usam bancos SQLite temporários e verificam autenticação, proteção de rotas e formulários, validação e operações de catálogo. Eles não exigem broker nem hardware. Consulte [PLANO.md](PLANO.md) para a matriz completa de requisitos e os TODOs.
+Os testes de integração usam Mosquitto local quando os executáveis estão no `PATH` ou em `C:\Program Files\mosquitto\`; caso contrário, esse teste é pulado. Eles sobem um broker temporário, verificam senha/ACL, mensagem retida, estado de teste, publicação após queda/reconexão e recusa de publicação no ACK MQTT 5. O estado de teste é uma **mensagem sintética isolada**, não uma confirmação de hardware. A validação RF04/RF06 com etiqueta física e a RNF12 continuam pendentes.
+
+O repositório é público. O [`.gitignore`](../.gitignore) protege `.env*`, `data/`, `secrets/`, certificados e bancos locais; não faça commit de senhas, chaves, Wi-Fi, certificados privados ou bancos reais. Revise `git diff --cached` antes de qualquer commit. Veja [PLANO.md](PLANO.md) para a matriz de requisitos.

@@ -1,0 +1,9 @@
+# Copy to data/broker/mosquitto.conf and run from web-app/.
+# Replace 127.0.0.1 with the trusted LAN address before connecting physical tags.
+listener 1883 127.0.0.1
+allow_anonymous false
+password_file data/broker/passwords
+acl_file data/broker/acl
+persistence true
+persistence_location data/broker/
+autosave_interval 30

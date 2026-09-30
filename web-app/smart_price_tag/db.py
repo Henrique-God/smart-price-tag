@@ -6,7 +6,7 @@ catalogs remain readable after Python identifiers move to English.
 
 from pathlib import Path
 
-from sqlalchemy import Column, ForeignKey, Integer, String, event
+from sqlalchemy import Column, ForeignKey, Integer, String, event, inspect
 from sqlmodel import Field, SQLModel, Session, create_engine
 
 
@@ -35,6 +35,18 @@ class Tag(SQLModel, table=True):
 
     identifier: str = Field(sa_column=Column("identificador", String(12), primary_key=True))
     product_id: int | None = Field(default=None, sa_column=Column("produto_id", Integer, ForeignKey("produto.id"), nullable=True, index=True))
+    desired_version: str | None = Field(default=None, sa_column=Column("versao_desejada", String(8)))
+    published_version: str | None = Field(default=None, sa_column=Column("versao_publicada", String(8)))
+    confirmed_version: str | None = Field(default=None, sa_column=Column("versao_confirmada", String(8)))
+    sequence: int = Field(default=0, sa_column=Column("sequencia", Integer, nullable=False, server_default="0"))
+    published_sequence: int = Field(default=0, sa_column=Column("sequencia_publicada", Integer, nullable=False, server_default="0"))
+    confirmed_sequence: int = Field(default=0, sa_column=Column("sequencia_confirmada", Integer, nullable=False, server_default="0"))
+    pending_payload: str | None = Field(default=None, sa_column=Column("mensagem_configuracao", String))
+    battery_mv: int | None = Field(default=None, sa_column=Column("tensao_mv", Integer))
+    rssi: int | None = Field(default=None, sa_column=Column("rssi", Integer))
+    firmware: str | None = Field(default=None, sa_column=Column("firmware", String(64)))
+    last_seen_at: int | None = Field(default=None, sa_column=Column("ultima_comunicacao", Integer))
+    last_received_at: int | None = Field(default=None, sa_column=Column("ultimo_recebimento", Integer))
 
 
 def make_engine(path: Path):
@@ -53,6 +65,15 @@ def make_engine(path: Path):
 
 def create_tables(engine) -> None:
     SQLModel.metadata.create_all(engine)
+    # SQLite create_all does not add columns to existing catalogs.
+    existing = {column["name"] for column in inspect(engine).get_columns("etiqueta")}
+    with engine.begin() as connection:
+        for column in Tag.__table__.columns:
+            if column.name not in existing:
+                definition = f'"{column.name}" {column.type.compile(engine.dialect)}'
+                if column.name in {"sequencia", "sequencia_publicada", "sequencia_confirmada"}:
+                    definition += " NOT NULL DEFAULT 0"
+                connection.exec_driver_sql(f'ALTER TABLE etiqueta ADD COLUMN {definition}')
 
 
 def session_for(engine) -> Session:
