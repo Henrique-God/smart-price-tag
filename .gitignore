@@ -7,6 +7,8 @@
 *.o
 *.obj
 
+*.pdf
+
 # Precompiled Headers
 *.gch
 *.pch
@@ -67,3 +69,30 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+
+# Python runtime, local environment, and private data
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+data/
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+.env*
+certs/
+secrets/
+credentials/
+secrets.json
+credentials.json
+token.json
+secrets.h
+secrets.hpp
+secrets.py
+*.pem
+*.key
+*.p12
+*.pfx

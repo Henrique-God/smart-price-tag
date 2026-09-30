@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Smart Price Tag{% endblock %} · Smart Price Tag</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}">
+</head>
+<body>
+  <a class="skip-link" href="#conteudo">Ir para o conteúdo</a>
+  <header class="site-header">
+    <div class="container header-inner">
+      <a class="brand" href="/produtos" aria-label="Smart Price Tag, início"><span class="brand-mark" aria-hidden="true">SP</span><span>Smart Price Tag</span></a>
+  {% if authenticated %}
+      <nav aria-label="Navegação principal" class="main-nav">
+        <a href="/produtos" {% if request.url.path.startswith('/produtos') %}aria-current="page"{% endif %}>Produtos</a>
+        <a href="/etiquetas" {% if request.url.path.startswith('/etiquetas') %}aria-current="page"{% endif %}>Etiquetas</a>
+      </nav>
+      <form method="post" action="/logout" class="logout-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="button button-ghost">Sair</button>
+      </form>
+      {% endif %}
+    </div>
+  </header>
+  <main id="conteudo" class="container main-content">
+    {% if flash_message %}<div class="notice" role="status">{{ flash_message }}</div>{% endif %}
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="site-footer"><div class="container">Catálogo local · A comunicação com as etiquetas ainda não está disponível.</div></footer>
+</body>
+</html>

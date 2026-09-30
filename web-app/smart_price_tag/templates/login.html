@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Entrar{% endblock %}
+{% block content %}
+<div class="auth-wrap">
+  <section class="card auth-card" aria-labelledby="login-title">
+    <p class="eyebrow">Área administrativa</p>
+    <h1 id="login-title">Entrar no catálogo</h1>
+    <p class="muted">Use as credenciais criadas pelo administrador local.</p>
+    {% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
+    {% if no_admin %}<div class="notice" role="status">Nenhum administrador foi criado. Execute o comando de criação inicial descrito no README.</div>{% endif %}
+    <form method="post" action="/login" class="form-stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="field"><label for="username">Login</label><input id="username" name="username" autocomplete="username" maxlength="80" value="{{ username }}" required autofocus></div>
+      <div class="field"><label for="password">Senha</label><input id="password" type="password" name="password" autocomplete="current-password" required></div>
+      <button type="submit" class="button button-primary">Entrar</button>
+    </form>
+  </section>
+</div>
+{% endblock %}

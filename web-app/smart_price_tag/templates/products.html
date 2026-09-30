@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Produtos{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <div><p class="eyebrow">Gerenciamento</p><h1>Produtos</h1><p class="muted">Preços e promoções salvos neste computador.</p></div>
+  <a class="button button-primary" href="/produtos/novo">Novo produto</a>
+</div>
+<div class="info-banner" role="note"><strong>Visor sem confirmação.</strong> As alterações abaixo estão apenas no catálogo local. Envio e telemetria ainda não estão disponíveis.</div>
+{% if products %}
+<div class="card table-wrap">
+  <table>
+    <caption class="sr-only">Produtos cadastrados</caption>
+    <thead><tr><th scope="col">Produto</th><th scope="col">Preço</th><th scope="col">EAN-13</th><th scope="col">Promoção</th><th scope="col">Ações</th></tr></thead>
+    <tbody>
+    {% for product in products %}
+      <tr>
+        <td><strong>{{ product.name }}</strong><span class="cell-detail">{{ product.description }}</span></td>
+        <td class="price">R$ {{ product.price_cents|price }}</td>
+        <td><code>{{ product.ean13 }}</code></td>
+        <td>
+          {% if product.promotion_price_cents %}
+          <strong>R$ {{ product.promotion_price_cents|price }}</strong>
+          <span class="cell-detail">{% if product.promotion_ends_at <= now %}Encerrada em{% else %}Até{% endif %} {{ product.promotion_ends_at|utc_timestamp }}</span>
+          {% else %}<span class="muted">Sem promoção</span>{% endif %}
+        </td>
+        <td>
+          <div class="actions">
+            <a href="/produtos/{{ product.id }}/editar">Editar</a>
+            <a href="/produtos/{{ product.id }}/promocao">{% if product.promotion_price_cents %}Editar promoção{% else %}Criar promoção{% endif %}</a>
+            <form method="post" action="/produtos/{{ product.id }}/excluir" onsubmit="return confirm('Excluir este produto do catálogo?');">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <button type="submit" class="link-button danger">Excluir</button>
+            </form>
+          </div>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<section class="card empty-state"><h2>Nenhum produto cadastrado</h2><p>Comece com o nome, o preço, uma descrição curta e um EAN-13 válido.</p><a class="button button-primary" href="/produtos/novo">Cadastrar produto</a></section>
+{% endif %}
+{% endblock %}

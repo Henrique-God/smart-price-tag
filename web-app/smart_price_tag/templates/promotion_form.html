@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Promoção de {{ product.name }}{% endblock %}
+{% block content %}
+<div class="page-heading"><div><p class="eyebrow">Catálogo / Promoção</p><h1>Promoção de {{ product.name }}</h1><p class="muted">Preço normal: R$ {{ product.price_cents|price }}</p></div></div>
+<section class="card form-card">
+  {% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
+  <form method="post" action="/produtos/{{ product.id }}/promocao" class="form-stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="field"><label for="price">Preço promocional (R$)</label><input id="price" name="price" inputmode="decimal" placeholder="9,90" value="{{ values.price }}" aria-describedby="promo-help" required><small id="promo-help">Deve ser maior que zero e menor que o preço normal.</small></div>
+    <div class="field"><label for="ends_at">Término da promoção (UTC)</label><input id="ends_at" name="ends_at" type="datetime-local" value="{{ values.ends_at }}" aria-describedby="date-help" required><small id="date-help">Informe a data e a hora em UTC. Exemplo: 15:00 UTC = 12:00 em Brasília (UTC−3).</small></div>
+    <div class="form-actions"><button type="submit" class="button button-primary">Salvar promoção</button><a href="/produtos" class="button button-ghost">Cancelar</a></div>
+  </form>
+  {% if product.promotion_price_cents %}
+  <div class="sub-action"><form method="post" action="/produtos/{{ product.id }}/promocao/remover" onsubmit="return confirm('Remover esta promoção do catálogo?');"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="link-button danger">Remover promoção</button></form></div>
+  {% endif %}
+</section>
+{% endblock %}

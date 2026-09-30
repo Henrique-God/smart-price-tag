@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Etiquetas{% endblock %}
+{% block content %}
+<div class="page-heading"><div><p class="eyebrow">Gerenciamento</p><h1>Etiquetas</h1><p class="muted">Cadastre pelo MAC e associe um produto por etiqueta.</p></div></div>
+<div class="info-banner" role="note"><strong>Telemetria indisponível.</strong> A tensão da bateria, a última comunicação e a confirmação do visor dependem da integração futura.</div>
+<section class="card create-tag" aria-labelledby="new-tag">
+  <h2 id="new-tag">Cadastrar etiqueta</h2>
+  {% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
+  <form method="post" action="/etiquetas" class="inline-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="field"><label for="identifier">Identificador MAC</label><input id="identifier" name="identifier" placeholder="A1B2C3D4E5F6" value="{{ identifier }}" aria-describedby="mac-help" required><small id="mac-help">12 dígitos hexadecimais; dois-pontos e hífens são aceitos.</small></div>
+    <button type="submit" class="button button-primary">Cadastrar</button>
+  </form>
+</section>
+{% if tags %}
+<div class="tag-grid">
+  {% for tag in tags %}
+  <section class="card tag-card" aria-labelledby="tag-{{ loop.index }}">
+    <div class="tag-top"><div><p class="eyebrow">Etiqueta</p><h2 id="tag-{{ loop.index }}"><code>{{ tag.identifier }}</code></h2></div><span class="badge">Catálogo local</span></div>
+    <p>{% if tag.product_id %}Produto vinculado: <strong>{{ product_names.get(tag.product_id, 'Produto indisponível') }}</strong>{% else %}<span class="muted">Nenhum produto vinculado.</span>{% endif %}</p>
+    <form method="post" action="/etiquetas/{{ tag.identifier }}/vinculo" class="form-stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="field"><label for="product-{{ loop.index }}">Produto para esta etiqueta</label><select id="product-{{ loop.index }}" name="product_id"><option value="">Sem produto (desvincular)</option>{% for product in products %}<option value="{{ product.id }}" {% if tag.product_id == product.id %}selected{% endif %}>{{ product.name }} · {{ product.ean13 }}</option>{% endfor %}</select></div>
+      <button type="submit" class="button button-secondary">Salvar vínculo</button>
+    </form>
+    <p class="tag-footnote">Visor e bateria: dados ainda não disponíveis.</p>
+  </section>
+  {% endfor %}
+</div>
+{% else %}
+<section class="card empty-state"><h2>Nenhuma etiqueta cadastrada</h2><p>Use o identificador MAC impresso ou obtido do dispositivo quando ele estiver disponível.</p></section>
+{% endif %}
+{% endblock %}

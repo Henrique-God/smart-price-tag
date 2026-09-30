@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<div class="page-heading"><div><p class="eyebrow">Catálogo</p><h1>{{ title }}</h1><p class="muted">Os dados serão salvos localmente.</p></div></div>
+<section class="card form-card">
+  {% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
+  <form method="post" action="{{ action }}" class="form-stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="field"><label for="name">Nome do produto</label><input id="name" name="name" maxlength="120" value="{{ values.get('name', '') }}" required autofocus></div>
+    <div class="field"><label for="price">Preço normal (R$)</label><input id="price" name="price" inputmode="decimal" placeholder="12,90" value="{{ values.get('price', '') }}" aria-describedby="price-help" required><small id="price-help">Use duas casas decimais; vírgula ou ponto.</small></div>
+    <div class="field"><label for="description">Descrição curta</label><input id="description" name="description" maxlength="160" value="{{ values.get('description', '') }}" required></div>
+    <div class="field"><label for="ean13">Código EAN-13</label><input id="ean13" name="ean13" inputmode="numeric" pattern="[0-9]{13}" maxlength="13" value="{{ values.get('ean13', '') }}" aria-describedby="ean-help" required><small id="ean-help">13 dígitos, incluindo o verificador.</small></div>
+    <div class="form-actions"><button type="submit" class="button button-primary">Salvar produto</button><a href="/produtos" class="button button-ghost">Cancelar</a></div>
+  </form>
+</section>
+{% endblock %}
