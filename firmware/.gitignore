@@ -1,0 +1,9 @@
+# Saída de build e cache do PlatformIO
+.pio/
+
+# Configuração local do VS Code, exceto a recomendação de extensões
+.vscode/*
+!.vscode/extensions.json
+
+# Segredos reais (use include/secrets.example.h como modelo)
+secrets.h
