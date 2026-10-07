@@ -1,6 +1,5 @@
 # Saída de build e cache do PlatformIO
 .pio/
-.claude/
 
 # Configuração local do VS Code, exceto a recomendação de extensões
 .vscode/*
