@@ -2,6 +2,8 @@
 
 import logging
 import threading
+import time
+from collections.abc import Callable
 
 import paho.mqtt.client as mqtt
 from sqlmodel import Session, select
@@ -16,17 +18,21 @@ logger = logging.getLogger(__name__)
 
 
 class MqttService:
-    def __init__(self, engine, settings: Settings):
+    def __init__(self, engine, settings: Settings, topic_identifier: Callable[[str], str | None] | None = None):
         self.engine = engine
         self.settings = settings
+        self.topic_identifier = topic_identifier
         self.connected = threading.Event()
         self.wake = threading.Event()
+        self.republish_requested = threading.Event()
         self.stop_event = threading.Event()
         self.stage_lock = threading.Lock()
         self.epoch = 0
         self.sent_epoch: dict[str, int] = {}
         self.publish_results: dict[int, bool] = {}
         self.publish_lock = threading.Lock()
+        self.status_issue_lock = threading.Lock()
+        self._last_status_issue: tuple[str, str, int] | None = None
         self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="spt-web", protocol=mqtt.MQTTv5)
         self.client.username_pw_set(settings.mqtt_username, settings.mqtt_password)
         self.client.on_connect = self._on_connect
@@ -54,6 +60,19 @@ class MqttService:
             stage_configs(session, self.settings.mqtt_master_key)
         self.wake.set()
 
+    def request_republish(self) -> None:
+        """Ask the worker to resend retained configurations without changing sequences."""
+        self.republish_requested.set()
+        self.wake.set()
+
+    def last_status_issue(self) -> tuple[str, str, int] | None:
+        with self.status_issue_lock:
+            return self._last_status_issue
+
+    def _set_status_issue(self, topic: str, reason: str) -> None:
+        with self.status_issue_lock:
+            self._last_status_issue = (topic, reason, int(time.time()))
+
     def _on_connect(self, client, userdata, flags, reason_code, properties):
         if reason_code.is_failure:
             logger.warning("Conexão MQTT recusada: %s", reason_code)
@@ -79,10 +98,17 @@ class MqttService:
     def _on_message(self, client, userdata, message):
         try:
             with Session(self.engine) as session:
-                record_status(session, message.topic, message.payload)
+                saved = record_status(session, message.topic, message.payload)
+            if saved:
+                with self.status_issue_lock:
+                    self._last_status_issue = None
+            else:
+                self._set_status_issue(message.topic, "Instante repetido ou anterior ao último estado salvo.")
         except InvalidStatus as error:
+            self._set_status_issue(message.topic, str(error))
             logger.warning("Estado MQTT ignorado em %s: %s", message.topic, error)
         except Exception:
+            self._set_status_issue(message.topic, "Falha ao salvar o estado. Consulte o terminal do backend.")
             logger.exception("Falha ao gravar estado MQTT")
 
     def _run(self) -> None:
@@ -90,6 +116,9 @@ class MqttService:
             try:
                 with self.stage_lock, Session(self.engine) as session:
                     stage_configs(session, self.settings.mqtt_master_key)
+                if self.republish_requested.is_set():
+                    self.sent_epoch.clear()
+                    self.republish_requested.clear()
                 with Session(self.engine) as session:
                     if self.connected.is_set():
                         for tag in session.exec(select(Tag).order_by(Tag.identifier)).all():
@@ -98,7 +127,8 @@ class MqttService:
                             if not tag.pending_payload or (tag.published_sequence == tag.sequence and self.sent_epoch.get(tag.identifier) == self.epoch):
                                 continue
                             epoch = self.epoch
-                            info = self.client.publish(f"spt/{tag.identifier}/config", tag.pending_payload, qos=1, retain=True)
+                            topic_id = self.topic_identifier(tag.identifier) if self.topic_identifier else None
+                            info = self.client.publish(f"spt/{topic_id or tag.identifier}/config", tag.pending_payload, qos=1, retain=True)
                             if info.rc != mqtt.MQTT_ERR_SUCCESS:
                                 break
                             info.wait_for_publish(timeout=5)

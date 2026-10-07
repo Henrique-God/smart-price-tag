@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 {% block title %}Etiquetas{% endblock %}
 {% block content %}
-<div class="page-heading"><div><p class="eyebrow">Gerenciamento</p><h1>Etiquetas</h1><p class="muted">Cadastre pelo MAC e associe um produto por etiqueta.</p></div></div>
-<div class="info-banner" role="note">{% if not mqtt_enabled %}MQTT não configurado. Configure o broker para publicar alterações e receber estados.{% elif not broker_connected %}Broker desconectado. As alterações salvas serão publicadas após a reconexão.{% else %}Broker conectado. A confirmação depende do estado enviado pela etiqueta.{% endif %}</div>
+<div class="page-heading"><div><p class="eyebrow">Gerenciamento</p><h1>Etiquetas</h1><p class="muted">Cadastre pelo MAC, associe um produto e clique em uma ESP para abrir seu painel.</p></div></div>
+<div class="info-banner" role="note">{% if not mqtt_enabled %}MQTT não configurado. Consulte a <a href="/mqtt">tela MQTT</a> para ver a configuração necessária.{% elif not broker_connected %}Broker desconectado. As alterações salvas serão publicadas após a reconexão. <a href="/mqtt">Ver MQTT</a>.{% else %}Broker conectado. A confirmação depende do estado enviado pela etiqueta. <a href="/mqtt">Ver MQTT</a>.{% endif %}</div>
 <section class="card create-tag" aria-labelledby="new-tag">
   <h2 id="new-tag">Cadastrar etiqueta</h2>
   {% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
@@ -12,32 +12,40 @@
     <button type="submit" class="button button-primary">Cadastrar</button>
   </form>
 </section>
-{% if tags %}
+{% if tag_rows %}
 <div class="tag-grid">
-  {% for tag in tags %}
-  <section class="card tag-card" aria-labelledby="tag-{{ loop.index }}">
-    <div class="tag-top"><div><p class="eyebrow">Etiqueta</p><h2 id="tag-{{ loop.index }}"><code>{{ tag.identifier }}</code></h2></div>
-      {% if not mqtt_enabled %}<span class="badge">MQTT não configurado</span>
-      {% elif tag.desired_version and tag.published_sequence != tag.sequence %}<span class="badge">Publicação pendente</span>
-      {% elif tag.published_version and tag.confirmed_version == tag.published_version and tag.desired_version == tag.published_version and tag.confirmed_sequence == tag.published_sequence == tag.sequence %}<span class="badge">Aplicada</span>
-      {% elif tag.published_version %}<span class="badge">Publicada; aguardando etiqueta</span>
-      {% else %}<span class="badge">Aguardando publicação</span>{% endif %}
+  {% for row in tag_rows %}
+  {% set tag = row.tag %}
+  <details id="tag-{{ tag.identifier }}" class="card tag-card tag-dashboard" data-live-tag="{{ tag.identifier }}">
+    <summary class="tag-summary">
+      <span class="tag-summary-id"><span class="eyebrow">ESP</span><strong><code>{{ tag.identifier }}</code></strong></span>
+      <span class="badge mqtt-badge-{{ row.state }}" data-live-field="state">{{ row.label }}</span>
+      <span class="tag-summary-last">Último estado: <span data-live-field="received">{% if tag.last_received_at %}{{ tag.last_received_at|utc_timestamp }}{% else %}Nenhum estado recebido{% endif %}</span></span>
+      <span class="tag-summary-hint"><span class="tag-hint-closed">Abrir painel ↓</span><span class="tag-hint-open">Fechar painel ↑</span></span>
+    </summary>
+    <div class="tag-dashboard-body">
+      <p class="tag-product">{% if tag.product_id %}Produto vinculado: <strong>{{ product_names.get(tag.product_id, 'Produto indisponível') }}</strong>{% else %}<span class="muted">Nenhum produto vinculado.</span>{% endif %}</p>
+      <div class="tag-dashboard-grid" aria-label="Dados recebidos e configuração da etiqueta {{ tag.identifier }}">
+        <div class="tag-stat"><span>Último estado recebido</span><strong data-live-field="received">{% if tag.last_received_at %}{{ tag.last_received_at|utc_timestamp }}{% else %}Nenhum estado recebido{% endif %}</strong></div>
+        <div class="tag-stat"><span>Sinal Wi-Fi</span><strong data-live-field="rssi">{% if tag.rssi is not none %}{{ tag.rssi }} dBm{% else %}Sem leitura{% endif %}</strong></div>
+        <div class="tag-stat"><span>Bateria</span><strong data-live-field="battery">{% if tag.battery_mv is not none %}{{ tag.battery_mv }} mV{% else %}Sem leitura{% endif %}</strong></div>
+        <div class="tag-stat"><span>Firmware</span><strong data-live-field="firmware">{{ tag.firmware or 'Sem leitura' }}</strong></div>
+        <div class="tag-stat"><span>Versão desejada</span><strong data-live-field="desired">{{ tag.desired_version or '—' }}</strong></div>
+        <div class="tag-stat"><span>Versão publicada</span><strong data-live-field="published">{{ tag.published_version or '—' }}</strong></div>
+        <div class="tag-stat"><span>Versão confirmada pela ESP</span><strong data-live-field="confirmed">{{ tag.confirmed_version or 'Não informada' }}</strong></div>
+      </div>
+      <p class="muted tag-dashboard-note">O último estado indica quando houve comunicação, sem confirmar que a conexão continua ativa. A configuração aparece como aplicada quando a ESP informa a versão atual.</p>
+      <form method="post" action="/etiquetas/{{ tag.identifier }}/vinculo" class="form-stack tag-link-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <div class="field"><label for="product-{{ loop.index }}">Produto para esta etiqueta</label><select id="product-{{ loop.index }}" name="product_id"><option value="">Sem produto (desvincular)</option>{% for product in products %}<option value="{{ product.id }}" {% if tag.product_id == product.id %}selected{% endif %}>{{ product.name }} · {{ product.ean13 }}</option>{% endfor %}</select></div>
+        <button type="submit" class="button button-secondary">Salvar vínculo</button>
+      </form>
     </div>
-    <p>{% if tag.product_id %}Produto vinculado: <strong>{{ product_names.get(tag.product_id, 'Produto indisponível') }}</strong>{% else %}<span class="muted">Nenhum produto vinculado.</span>{% endif %}</p>
-    <form method="post" action="/etiquetas/{{ tag.identifier }}/vinculo" class="form-stack">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <div class="field"><label for="product-{{ loop.index }}">Produto para esta etiqueta</label><select id="product-{{ loop.index }}" name="product_id"><option value="">Sem produto (desvincular)</option>{% for product in products %}<option value="{{ product.id }}" {% if tag.product_id == product.id %}selected{% endif %}>{{ product.name }} · {{ product.ean13 }}</option>{% endfor %}</select></div>
-      <button type="submit" class="button button-secondary">Salvar vínculo</button>
-    </form>
-    <div class="tag-footnote">
-      <div>Versão publicada: {{ tag.published_version or '—' }} · versão confirmada: {{ tag.confirmed_version or '—' }}</div>
-      <div>Bateria: {% if tag.battery_mv is not none %}{{ tag.battery_mv }} mV{% else %}sem leitura{% endif %} · RSSI: {% if tag.rssi is not none %}{{ tag.rssi }} dBm{% else %}sem leitura{% endif %}</div>
-      <div>Firmware: {{ tag.firmware or 'sem leitura' }} · última comunicação: {% if tag.last_seen_at %}{{ tag.last_seen_at|utc_timestamp }}{% else %}nenhuma{% endif %}</div>
-    </div>
-  </section>
+  </details>
   {% endfor %}
 </div>
 {% else %}
 <section class="card empty-state"><h2>Nenhuma etiqueta cadastrada</h2><p>Use o identificador MAC impresso ou obtido do dispositivo quando ele estiver disponível.</p></section>
 {% endif %}
 {% endblock %}
+{% block scripts %}<script src="/static/tag_status.js" defer></script>{% endblock %}

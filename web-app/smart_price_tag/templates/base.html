@@ -15,6 +15,7 @@
       <nav aria-label="Navegação principal" class="main-nav">
         <a href="/produtos" {% if request.url.path.startswith('/produtos') %}aria-current="page"{% endif %}>Produtos</a>
         <a href="/etiquetas" {% if request.url.path.startswith('/etiquetas') %}aria-current="page"{% endif %}>Etiquetas</a>
+        <a href="/mqtt" {% if request.url.path.startswith('/mqtt') %}aria-current="page"{% endif %}>MQTT</a>
       </nav>
       <form method="post" action="/logout" class="logout-form">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -28,5 +29,6 @@
     {% block content %}{% endblock %}
   </main>
   <footer class="site-footer"><div class="container">Catálogo, publicação MQTT e estados das etiquetas · Smart Price Tag</div></footer>
+  {% block scripts %}{% endblock %}
 </body>
 </html>

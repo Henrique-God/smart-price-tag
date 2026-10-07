@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}MQTT{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <div>
+    <p class="eyebrow">Comunicação</p>
+    <h1>MQTT</h1>
+    <p class="muted">Acompanhe a conexão com o broker e a entrega das configurações às etiquetas.</p>
+  </div>
+  <a class="button button-ghost" href="/mqtt">Atualizar situação</a>
+</div>
+{% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
+{% if last_status_issue %}<div class="error" role="alert">Último estado MQTT ignorado em <code>{{ last_status_issue[0] }}</code> ({{ last_status_issue[2]|utc_timestamp }}): {{ last_status_issue[1] }}</div>{% endif %}
+{% if credentials %}
+<section class="card mqtt-credentials" aria-labelledby="mqtt-credentials-title">
+  <h2 id="mqtt-credentials-title">Credenciais de <code>{{ credentials.identifier }}</code></h2>
+  <p>Copie agora para o provisionamento da ESP. A senha MQTT é exibida somente nesta resposta; se perdê-la, gere outra na ação “Trocar senha”.</p>
+  <p>Na ESP, use o usuário MQTT exatamente como aparece abaixo. O Client ID pode ser diferente. A senha MQTT e a chave HMAC têm funções diferentes.</p>
+  <dl>
+    <div><dt>Usuário MQTT</dt><dd><code>{{ credentials.username }}</code></dd></div>
+    <div><dt>Tópico para receber configurações</dt><dd><code>spt/{{ credentials.username }}/config</code></dd></div>
+    <div><dt>Tópico para enviar estado</dt><dd><code>spt/{{ credentials.username }}/status</code></dd></div>
+    <div><dt>Senha MQTT</dt><dd><code>{{ credentials.password }}</code></dd></div>
+    <div><dt>Chave HMAC da etiqueta</dt><dd><code>{{ credentials.key }}</code></dd></div>
+  </dl>
+  <p class="muted">Reinicie o broker para aplicar a senha e a ACL. Nunca coloque a chave mestra na ESP.</p>
+</section>
+{% endif %}
+
+<section class="card mqtt-connection" aria-labelledby="mqtt-connection-title">
+  <div>
+    <p class="eyebrow">Broker</p>
+    <h2 id="mqtt-connection-title">{% if not mqtt_enabled %}Não configurado{% elif broker_connected %}Conectado{% else %}Desconectado{% endif %}</h2>
+    {% if mqtt_enabled %}
+    <p class="muted">Destino: <code>{{ broker_host }}:{{ broker_port }}</code> · usuário: <code>{{ broker_username }}</code></p>
+    {% if not broker_connected %}<p class="muted">O publicador tentará reconectar automaticamente. As configurações pendentes permanecem salvas.</p>{% endif %}
+    {% else %}
+    <p class="muted">{% if broker_ready %}Os arquivos locais estão prontos. Reinicie o backend para carregar a configuração MQTT.{% else %}Prepare os arquivos do broker abaixo. O backend também aceita <code>SPT_MQTT_HOST</code>, <code>SPT_MQTT_USERNAME</code>, <code>SPT_MQTT_PASSWORD</code> e <code>SPT_MQTT_MASTER_KEY</code> como variáveis de ambiente.{% endif %}</p>
+    {% endif %}
+  </div>
+  <span class="mqtt-indicator {% if broker_connected %}mqtt-indicator-connected{% elif mqtt_enabled %}mqtt-indicator-disconnected{% endif %}" aria-hidden="true"></span>
+</section>
+
+<div class="mqtt-admin-grid">
+  <section class="card mqtt-admin-card" aria-labelledby="mqtt-broker-settings">
+    <h2 id="mqtt-broker-settings">Configuração do broker</h2>
+    {% if broker_ready %}
+    <form method="post" action="/mqtt/listener" class="form-stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="field"><label for="mqtt-listener-host">IP do computador para escuta</label><input id="mqtt-listener-host" name="host" value="{{ listener_host }}" list="local-ipv4" required><datalist id="local-ipv4">{% for address in local_ipv4_addresses %}<option value="{{ address }}">{% endfor %}</datalist><small>IPs locais detectados: {{ local_ipv4_addresses|join(', ') }}. Use 127.0.0.1 apenas para testes locais; a ESP precisa do IP da rede local.</small></div>
+      <div class="field"><label for="mqtt-listener-port">Porta MQTT</label><input id="mqtt-listener-port" name="port" type="number" min="1" max="65535" value="{{ listener_port }}" required></div>
+      <button class="button button-secondary" type="submit">Salvar configuração</button>
+    </form>
+    <p class="muted mqtt-admin-note">Configuração salva: <code>{{ listener_host }}:{{ listener_port }}</code>. Reinicie o broker e o backend após alterar.</p>
+    {% else %}
+    <p class="muted">Cria a configuração local, a ACL inicial, o usuário da aplicação e uma chave mestra aleatória. Nenhum segredo é exibido.</p>
+    <form method="post" action="/mqtt/preparar"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="button button-secondary" type="submit">Preparar arquivos locais</button></form>
+    {% endif %}
+  </section>
+  <section class="card mqtt-admin-card" aria-labelledby="mqtt-provision-title">
+    <h2 id="mqtt-provision-title">Provisionar etiqueta</h2>
+    <p class="muted">Informe o MAC real da ESP. A aplicação cadastra a etiqueta, gera uma senha exclusiva e permite apenas seus próprios tópicos na ACL. Escolha o formato que a ESP usa para o usuário MQTT e para os tópicos. O Client ID não é usado como usuário.</p>
+    <form method="post" action="/mqtt/etiquetas" class="form-stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="field"><label for="mqtt-tag-id">MAC da etiqueta</label><input id="mqtt-tag-id" name="identifier" placeholder="AABBCCDDEEFF" required><small>12 dígitos hexadecimais; separadores : e - são aceitos.</small></div>
+      <div class="field"><label for="mqtt-username-case">Usuário e tópicos MQTT</label><select id="mqtt-username-case" name="username_case"><option value="upper">MAC em maiúsculas</option><option value="lower">MAC em minúsculas</option></select><small>O identificador da etiqueta no catálogo permanece em maiúsculas.</small></div>
+      <button class="button button-primary" type="submit" {% if not broker_ready %}disabled{% endif %}>Cadastrar e gerar credenciais</button>
+    </form>
+  </section>
+</div>
+
+<div class="mqtt-metrics" aria-label="Resumo das etiquetas">
+  <div class="card mqtt-metric"><span>Total de etiquetas</span><strong>{{ rows|length }}</strong></div>
+  <div class="card mqtt-metric"><span>Pendentes</span><strong data-live-count="pending">{{ counts.pending }}</strong></div>
+  <div class="card mqtt-metric"><span>Sem estado</span><strong data-live-count="waiting">{{ counts.waiting }}</strong></div>
+  <div class="card mqtt-metric"><span>Estado recebido</span><strong data-live-count="received">{{ counts.received }}</strong></div>
+  <div class="card mqtt-metric"><span>Aplicadas</span><strong data-live-count="applied">{{ counts.applied }}</strong></div>
+</div>
+
+<section class="card mqtt-action" aria-labelledby="mqtt-action-title">
+  <div>
+    <h2 id="mqtt-action-title">Republicar configurações</h2>
+    <p class="muted">Solicita o reenvio da configuração retida de todas as etiquetas cadastradas. A versão e a sequência de cada configuração permanecem iguais.</p>
+  </div>
+  <form method="post" action="/mqtt/republicar">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit" class="button button-primary" {% if not mqtt_enabled or not rows %}disabled{% endif %}>Republicar todas</button>
+  </form>
+</section>
+
+<section aria-labelledby="mqtt-tags-title" class="mqtt-tags">
+  <div class="page-heading"><div><h2 id="mqtt-tags-title">Entrega por etiqueta</h2><p class="muted">O acesso abaixo mostra os arquivos locais; reinicie o broker para aplicar alterações. Publicada indica confirmação do broker. Aplicada exige um estado da etiqueta para a configuração atual.</p></div></div>
+  {% if rows %}
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th scope="col">Etiqueta</th><th scope="col">Acesso MQTT</th><th scope="col">Situação</th><th scope="col">Versões</th><th scope="col">Último estado recebido</th><th scope="col">Ações</th></tr></thead>
+      <tbody>
+      {% for row in rows %}
+      <tr data-live-tag="{{ row.tag.identifier }}">
+        <td><a href="/etiquetas#tag-{{ row.tag.identifier }}"><code>{{ row.tag.identifier }}</code></a></td>
+        <td>{% if row.provisioned %}<span class="badge mqtt-badge-applied">Nos arquivos</span><span class="cell-detail">Usuário: <code>{{ row.mqtt_username }}</code><br>Tópicos: <code>spt/{{ row.mqtt_username }}/config</code> e <code>spt/{{ row.mqtt_username }}/status</code></span>{% else %}<span class="badge">Sem acesso</span>{% endif %}</td>
+        <td><span class="badge mqtt-badge-{{ row.state }}" data-live-field="state">{{ row.label }}</span></td>
+        <td>Desejada: <code data-live-field="desired">{{ row.tag.desired_version or '—' }}</code><span class="cell-detail">Publicada: <span data-live-field="published">{{ row.tag.published_version or '—' }}</span> · confirmada: <span data-live-field="confirmed">{{ row.tag.confirmed_version or 'Não informada' }}</span></span></td>
+        <td data-live-field="received">{% if row.tag.last_received_at %}{{ row.tag.last_received_at|utc_timestamp }}{% else %}<span class="muted">Nenhum estado recebido</span>{% endif %}</td>
+        <td>
+          {% if row.provisioned %}
+          <div class="mqtt-row-actions">
+            <form method="post" action="/mqtt/etiquetas/{{ row.tag.identifier }}/usuario"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="username_case" value="{% if row.mqtt_username == row.tag.identifier %}lower{% else %}upper{% endif %}"><button type="submit" class="link-button">{% if row.mqtt_username == row.tag.identifier %}Usar minúsculas{% else %}Usar maiúsculas{% endif %}</button></form>
+            <form method="post" action="/mqtt/etiquetas/{{ row.tag.identifier }}/rotacionar"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="link-button">Trocar senha</button></form>
+            <form method="post" action="/mqtt/etiquetas/{{ row.tag.identifier }}/revogar"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="link-button danger">Revogar acesso</button></form>
+          </div>
+          {% else %}<span class="muted">Use o formulário acima</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="card empty-state"><h2>Nenhuma etiqueta cadastrada</h2><p>Cadastre uma etiqueta para acompanhar sua publicação e seu estado.</p><a class="button button-secondary" href="/etiquetas">Ir para Etiquetas</a></div>
+  {% endif %}
+</section>
+{% endblock %}
+{% block scripts %}<script src="/static/tag_status.js" defer></script>{% endblock %}

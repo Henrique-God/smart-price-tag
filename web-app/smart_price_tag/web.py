@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlmodel import Session, select
 from starlette.middleware.sessions import SessionMiddleware
@@ -14,6 +14,7 @@ from starlette.templating import Jinja2Templates
 
 from . import catalog
 from .authentication import authenticate
+from .broker_admin import BrokerError, BrokerManager
 from .config import Settings
 from .db import AdminUser, Product, Tag, create_tables, make_engine
 from .mqtt import MqttService
@@ -26,11 +27,21 @@ templates.env.filters["utc_timestamp"] = catalog.format_utc_timestamp
 templates.env.filters["utc_input"] = catalog.format_utc_input
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, broker_manager: BrokerManager | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
+    broker_manager = broker_manager or BrokerManager(ROOT.parent)
     engine = make_engine(settings.database_path)
     create_tables(engine)
-    mqtt_service = MqttService(engine, settings) if settings.mqtt_host else None
+    managed_broker = False
+    if broker_manager.ready() and settings.mqtt_username == "spt-app":
+        try:
+            managed_broker = (
+                (settings.mqtt_host, settings.mqtt_port) == broker_manager.listener()
+                and settings.mqtt_password == broker_manager.app_password_path.read_text(encoding="ascii").strip()
+            )
+        except (BrokerError, OSError):
+            pass
+    mqtt_service = MqttService(engine, settings, broker_manager.tag_username if managed_broker else None) if settings.mqtt_host else None
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -45,6 +56,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="Smart Price Tag", lifespan=lifespan)
     app.state.engine = engine
     app.state.mqtt_service = mqtt_service
+    app.state.broker_manager = broker_manager
     app.add_middleware(
         SessionMiddleware,
         secret_key=settings.session_secret,
@@ -249,12 +261,205 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return redirect("/produtos", str(error), request)
         return redirect("/produtos", "Promoção removida do catálogo." + catalog_changed(), request)
 
+    def delivery_state(tag: Tag) -> tuple[str, str]:
+        if mqtt_service is None:
+            return "pending", "MQTT não configurado"
+        if not tag.desired_version or not tag.pending_payload:
+            return "pending", "Preparando publicação"
+        if tag.published_sequence != tag.sequence or tag.published_version != tag.desired_version:
+            return "pending", "Publicação pendente"
+        if tag.confirmed_version == tag.desired_version and tag.confirmed_sequence == tag.sequence:
+            return "applied", "Aplicada"
+        if tag.last_received_at is not None:
+            return "received", "Estado recebido · aguardando confirmação"
+        return "waiting", "Aguardando primeiro estado"
+
+    def mqtt_page(request: Request, *, error: str | None = None, credentials: dict | None = None, status_code: int = 200):
+        with Session(engine) as session:
+            tags = session.exec(select(Tag).order_by(Tag.identifier)).all()
+        try:
+            accounts = broker_manager.provisioned_accounts()
+        except BrokerError as exc:
+            accounts = {}
+            error = error or str(exc)
+        try:
+            listener_host, listener_port = broker_manager.listener() if broker_manager.ready() else ("127.0.0.1", 1884)
+        except BrokerError as exc:
+            listener_host, listener_port = "127.0.0.1", 1884
+            error = error or str(exc)
+
+        counts = {"pending": 0, "waiting": 0, "received": 0, "applied": 0}
+        rows = []
+        for tag in tags:
+            state, label = delivery_state(tag)
+            counts[state] += 1
+            rows.append({"tag": tag, "state": state, "label": label, "mqtt_username": accounts.get(tag.identifier), "provisioned": tag.identifier in accounts})
+
+        response = render(
+            request,
+            "mqtt.html",
+            status_code=status_code,
+            mqtt_enabled=mqtt_service is not None,
+            broker_connected=bool(mqtt_service and mqtt_service.connected.is_set()),
+            broker_host=settings.mqtt_host,
+            broker_port=settings.mqtt_port,
+            broker_username=settings.mqtt_username,
+            broker_ready=broker_manager.ready(),
+            last_status_issue=mqtt_service.last_status_issue() if mqtt_service else None,
+            listener_host=listener_host,
+            listener_port=listener_port,
+            local_ipv4_addresses=broker_manager.local_ipv4_addresses(),
+            error=error,
+            credentials=credentials,
+            rows=rows,
+            counts=counts,
+        )
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        return response
+
+    @app.get("/mqtt", response_class=HTMLResponse)
+    def mqtt_dashboard(request: Request):
+        denied = require_login(request)
+        if denied:
+            return denied
+        return mqtt_page(request)
+
+    @app.get("/mqtt/estado")
+    def mqtt_status_feed(request: Request):
+        denied = require_login(request)
+        if denied:
+            return denied
+        with Session(engine) as session:
+            tags = session.exec(select(Tag).order_by(Tag.identifier)).all()
+            items = []
+            counts = {"pending": 0, "waiting": 0, "received": 0, "applied": 0}
+            for tag in tags:
+                state, label = delivery_state(tag)
+                counts[state] += 1
+                items.append({
+                    "identifier": tag.identifier,
+                    "state": state,
+                    "label": label,
+                    "desired": tag.desired_version or "—",
+                    "published": tag.published_version or "—",
+                    "confirmed": tag.confirmed_version or "Não informada",
+                    "received": catalog.format_utc_timestamp(tag.last_received_at) if tag.last_received_at else "Nenhum estado recebido",
+                    "battery": f"{tag.battery_mv} mV" if tag.battery_mv is not None else "Sem leitura",
+                    "rssi": f"{tag.rssi} dBm" if tag.rssi is not None else "Sem leitura",
+                    "firmware": tag.firmware or "Sem leitura",
+                })
+        return JSONResponse({"tags": items, "counts": counts}, headers={"Cache-Control": "no-store"})
+
+    @app.post("/mqtt/preparar")
+    async def prepare_broker(request: Request):
+        denied = require_login(request)
+        if denied:
+            return denied
+        await read_form(request)
+        try:
+            broker_manager.bootstrap()
+        except BrokerError as error:
+            return mqtt_page(request, error=str(error), status_code=400)
+        return redirect("/mqtt", "Arquivos do broker preparados. Reinicie o backend para usar a configuração local.", request)
+
+    @app.post("/mqtt/listener")
+    async def save_broker_listener(request: Request):
+        denied = require_login(request)
+        if denied:
+            return denied
+        form = await read_form(request)
+        try:
+            broker_manager.save_listener(str(form.get("host", "")), str(form.get("port", "")))
+        except BrokerError as error:
+            return mqtt_page(request, error=str(error), status_code=400)
+        return redirect("/mqtt", "Endereço salvo. Reinicie o broker e o backend para aplicar a mudança.", request)
+
+    @app.post("/mqtt/etiquetas")
+    async def provision_mqtt_tag(request: Request):
+        denied = require_login(request)
+        if denied:
+            return denied
+        form = await read_form(request)
+        if not broker_manager.ready():
+            return mqtt_page(request, error="Prepare os arquivos do broker antes de provisionar etiquetas.", status_code=400)
+        try:
+            identifier = catalog.validate_identifier(str(form.get("identifier", "")))
+            with Session(engine) as session:
+                if session.get(Tag, identifier) is None:
+                    catalog.register_tag(session, identifier)
+            password, key = broker_manager.provision_tag(identifier, username_case=str(form.get("username_case", "upper")))
+        except (catalog.CatalogError, BrokerError) as error:
+            return mqtt_page(request, error=str(error), status_code=400)
+        return mqtt_page(request, credentials={"identifier": identifier, "username": broker_manager.tag_username(identifier), "password": password, "key": key})
+
+    @app.post("/mqtt/etiquetas/{identifier}/rotacionar")
+    async def rotate_mqtt_tag(request: Request, identifier: str):
+        denied = require_login(request)
+        if denied:
+            return denied
+        await read_form(request)
+        try:
+            identifier = catalog.validate_identifier(identifier)
+            with Session(engine) as session:
+                catalog.get_tag(session, identifier)
+            password, key = broker_manager.provision_tag(identifier, rotate=True)
+        except (catalog.CatalogError, BrokerError) as error:
+            return mqtt_page(request, error=str(error), status_code=400)
+        return mqtt_page(request, credentials={"identifier": identifier, "username": broker_manager.tag_username(identifier), "password": password, "key": key})
+
+    @app.post("/mqtt/etiquetas/{identifier}/usuario")
+    async def change_mqtt_tag_username(request: Request, identifier: str):
+        denied = require_login(request)
+        if denied:
+            return denied
+        form = await read_form(request)
+        try:
+            username = broker_manager.set_tag_username_case(identifier, str(form.get("username_case", "")))
+        except (catalog.CatalogError, BrokerError) as error:
+            return mqtt_page(request, error=str(error), status_code=400)
+        if mqtt_service is not None and managed_broker:
+            mqtt_service.request_republish()
+        return redirect("/mqtt", f"Usuário e tópicos MQTT alterados para {username}. A senha foi mantida. Reinicie o broker para aplicar.", request)
+
+    @app.post("/mqtt/etiquetas/{identifier}/revogar")
+    async def revoke_mqtt_tag(request: Request, identifier: str):
+        denied = require_login(request)
+        if denied:
+            return denied
+        await read_form(request)
+        try:
+            broker_manager.revoke_tag(identifier)
+        except (catalog.CatalogError, BrokerError) as error:
+            return mqtt_page(request, error=str(error), status_code=400)
+        return redirect("/mqtt", "Acesso MQTT removido dos arquivos. Reinicie o broker para aplicar a revogação.", request)
+
+    @app.post("/mqtt/republicar")
+    async def republish_mqtt(request: Request):
+        denied = require_login(request)
+        if denied:
+            return denied
+        await read_form(request)
+        if mqtt_service is None:
+            return redirect("/mqtt", "Configure o MQTT no servidor antes de republicar.", request)
+        mqtt_service.request_republish()
+        message = (
+            "Republicação solicitada. Atualize a página para acompanhar as etiquetas."
+            if mqtt_service.connected.is_set()
+            else "Broker desconectado. As configurações serão reenviadas após a reconexão."
+        )
+        return redirect("/mqtt", message, request)
+
     def tag_page(request: Request, *, error: str | None = None, identifier: str = "", status_code: int = 200):
         with Session(engine) as session:
             tags = session.exec(select(Tag).order_by(Tag.identifier)).all()
             products = session.exec(select(Product).order_by(Product.name, Product.id)).all()
             product_names = {product.id: product.name for product in products}
-        return render(request, "tags.html", status_code=status_code, tags=tags, products=products, product_names=product_names, error=error, identifier=identifier, mqtt_enabled=mqtt_service is not None, broker_connected=bool(mqtt_service and mqtt_service.connected.is_set()))
+        tag_rows = []
+        for tag in tags:
+            state, label = delivery_state(tag)
+            tag_rows.append({"tag": tag, "state": state, "label": label})
+        return render(request, "tags.html", status_code=status_code, tag_rows=tag_rows, products=products, product_names=product_names, error=error, identifier=identifier, mqtt_enabled=mqtt_service is not None, broker_connected=bool(mqtt_service and mqtt_service.connected.is_set()))
 
     @app.get("/etiquetas", response_class=HTMLResponse)
     def list_tags(request: Request):
@@ -275,7 +480,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 catalog.register_tag(session, identifier)
         except catalog.CatalogError as error:
             return tag_page(request, error=str(error), identifier=identifier, status_code=400)
-        return redirect("/etiquetas", "Etiqueta cadastrada no catálogo." + catalog_changed(), request)
+        return redirect("/etiquetas", "Etiqueta cadastrada no catálogo. Provisione o acesso dela na tela MQTT." + catalog_changed(), request)
 
     @app.post("/etiquetas/{identifier}/vinculo")
     async def change_link(request: Request, identifier: str):

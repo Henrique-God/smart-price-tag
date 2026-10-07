@@ -180,7 +180,7 @@ def test_mosquitto_acl_retained_reconnect_and_status(tmp_path):
                     return tag.published_sequence == tag.sequence and tag.sequence > 0
 
             wait_until(published)
-            assert "Publicada; aguardando etiqueta" in client.get("/etiquetas").text
+            assert "Aguardando primeiro estado" in client.get("/etiquetas").text
             assert "Aplicada" not in client.get("/etiquetas").text
             command = [sub, "-h", "127.0.0.1", "-p", str(port), "-u", TAG_A, "-P", "fixture-password", "-t", f"spt/{TAG_A}/config", "-C", "1", "-W", "3"]
             retained = subprocess.run(command, check=True, capture_output=True, text=True, timeout=5)
@@ -222,7 +222,7 @@ def test_mosquitto_acl_retained_reconnect_and_status(tmp_path):
             assert "Publicação pendente" in client.get("/etiquetas").text
             process = subprocess.Popen([broker, "-c", str(tmp_path / "mosquitto.conf")], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             wait_until(published)
-            assert "Publicada; aguardando etiqueta" in client.get("/etiquetas").text
+            assert "Estado recebido · aguardando confirmação" in client.get("/etiquetas").text
             retained = subprocess.run(command, check=True, capture_output=True, text=True, timeout=5)
             assert json.loads(json.loads(retained.stdout)["dados"])["produto"]["preco"] == 1300
 

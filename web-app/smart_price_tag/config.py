@@ -28,11 +28,22 @@ class Settings:
         username = os.environ.get("SPT_MQTT_USERNAME")
         password = os.environ.get("SPT_MQTT_PASSWORD")
         key_hex = os.environ.get("SPT_MQTT_MASTER_KEY")
+        default_port = "1883"
+        if not any((host, username, password, key_hex)):
+            from .broker_admin import BrokerManager
+
+            broker = BrokerManager()
+            if broker.ready():
+                host, local_port = broker.listener()
+                username = "spt-app"
+                password = broker.app_password_path.read_text(encoding="ascii").strip()
+                key_hex = broker.master_path.read_text(encoding="ascii").strip()
+                default_port = str(local_port)
         if any((host, username, password, key_hex)) and not all((host, username, password, key_hex)):
             raise RuntimeError("Defina SPT_MQTT_HOST, SPT_MQTT_USERNAME, SPT_MQTT_PASSWORD e SPT_MQTT_MASTER_KEY juntos.")
         try:
             key = bytes.fromhex(key_hex) if key_hex else None
-            port = int(os.environ.get("SPT_MQTT_PORT", "1883"))
+            port = int(os.environ.get("SPT_MQTT_PORT", default_port))
         except ValueError as error:
             raise RuntimeError("Chave MQTT hexadecimal ou porta MQTT inválida.") from error
         if key is not None and len(key) != 32:
