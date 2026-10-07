@@ -4,7 +4,9 @@ Firmware da etiqueta eletrônica de preço (PCS3858, Poli-USP). Roda em um ESP32
 
 A etiqueta passa quase todo o tempo em deep sleep. Ela desperta uma vez por dia, ou quando o botão é pressionado. A cada despertar, busca a configuração no broker MQTT, redesenha o visor se necessário, publica seu estado e volta a dormir.
 
-> **Estado atual (S4):** só o ambiente e o esqueleto estão prontos. O firmware imprime a versão, a causa do despertar e o ID da etiqueta, e depois dorme. Os módulos têm apenas stubs marcados com `TODO(F2)` a `TODO(F5)`.
+> **Estado atual (S5):** ambiente, esqueleto, driver do visor (`display`) e programa de bancada prontos. O firmware imprime a versão, a causa do despertar e o ID da etiqueta, e depois dorme. Os demais módulos têm stubs marcados com `TODO(F2)` a `TODO(F5)`.
+>
+> Antes de implementar, leia [`AGENTS.md`](AGENTS.md) (regras, tarefas F1–F6 e critérios de aceitação) e o [`CONTRATO.md`](../CONTRATO.md) (mensagens trocadas com a aplicação).
 
 ## 1. Instalar o PlatformIO
 
@@ -105,11 +107,43 @@ A velocidade (115200) e o decodificador de exceções vêm do `platformio.ini`. 
 3. Cerca de 3 minutos depois, a placa reinicia sozinha e imprime `despertar: timer`.
 4. O ID é o MAC station sem `:` e em minúsculas. Ele deve bater com o `MAC:` que o `esptool` mostra durante o upload.
 
+## 6. Teste de bancada (sem rede)
+
+O ambiente `bancada` grava um programa de teste de hardware, que não é o firmware: confere a ligação SPI e a linha BUSY do visor, as três cores, a orientação, a escala em mm, o tempo de redesenho, o botão e o despertar do deep sleep. Não precisa de `include/secrets.h` nem de bateria (a placa fica no USB).
+
+```bash
+pio run -e bancada -t upload
+```
+
+```bash
+pio device monitor -e bancada
+```
+
+No monitor: `r` redesenha, `s` adormece a placa (o botão acorda), `?` mostra os comandos. As ligações e o roteiro completo, com a tabela de sintomas, estão na seção 6 do [`AGENTS.md`](AGENTS.md).
+
+Para o módulo `render` (F2): `e` roda o autoteste do EAN-13 (também roda no boot e não precisa do visor); `1` a `5` desenham as telas reais da etiqueta pelo mesmo caminho do firmware: `1` promoção (vetor V1), `2` padrão com acentos (V2), `3` sem produto com o ID da placa (V3), `4` pior caso com letras largas, `5` pior caso com acentos.
+
+### Teste do EAN-13 no PC
+
+`render_ean13_modules` fica em `lib/render/render_ean13.cpp`, sem dependência de Arduino, e é testado no PC contra as referências do F2. Precisa de um `g++` com suporte a C++11 no PATH (no Windows, MinGW ou MSYS2). A partir de `firmware/`:
+
+```bash
+g++ -std=gnu++11 -Wall -Wextra -I lib/render -I lib/types test/host/test_ean13.cpp lib/render/render_ean13.cpp -o .pio/test_ean13
+```
+
+```bash
+.pio/test_ean13
+```
+
+A última linha deve ser `PASSOU: 0 falha(s)`.
+
 ## Organização do código
 
 ```
 include/   board.h (pinos), secrets.example.h, spt_secrets.h
 src/       main.cpp: orquestra o ciclo (roda uma vez em setup())
+src/bancada/  programa de teste de hardware (só no ambiente `bancada`)
+test/host/    testes que rodam no PC, sem placa (g++)
 lib/       um módulo por pasta, cada um com <modulo>.h (interface) e <modulo>.cpp
 ```
 
