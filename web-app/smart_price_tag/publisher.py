@@ -26,12 +26,16 @@ def content_for_tag(session: Session, tag: Tag) -> dict:
     }
 
 
+def configuration_version(content: dict) -> str:
+    return hashlib.sha256(serialize(content).encode("utf-8")).hexdigest()[:8]
+
+
 def stage_configs(session: Session, master_key: bytes) -> int:
     """Reconcile all tags, including changes committed just before a process crash."""
     changed = 0
     for tag in session.exec(select(Tag).order_by(Tag.identifier)).all():
         content = content_for_tag(session, tag)
-        version = hashlib.sha256(serialize(content).encode("utf-8")).hexdigest()[:8]
+        version = configuration_version(content)
         if tag.desired_version == version and tag.pending_payload:
             continue
         tag.sequence += 1

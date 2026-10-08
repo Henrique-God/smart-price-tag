@@ -4,6 +4,34 @@ Aplicação FastAPI/Jinja2/SQLite baseada em `../main (1).pdf`. Esta entrega imp
 
 Os módulos seguem as responsabilidades da seção 3.3.2: `web` apresenta e controla sessão; `authentication` valida administrador; `catalog` aplica regras de produto, etiqueta e promoção; `db` persiste; `publisher` monta configurações; `security` deriva chaves e assina; `mqtt` mantém a conexão e republica; `monitor` valida e grava estados.
 
+## Executar localmente no Windows
+
+Com a instalação e o provisionamento abaixo já concluídos, execute a partir da **raiz do repositório `smart-price-tag/`**.
+
+No **PowerShell**, use o Bash do Git for Windows explicitamente:
+
+```powershell
+& "C:\Program Files\Git\bin\bash.exe" ./web-app/run-local.sh
+```
+
+No **Git Bash**, o comando equivalente é:
+
+```bash
+bash web-app/run-local.sh
+```
+
+Se o terminal já estiver dentro de `web-app/`, use `./run-local.sh` no lugar de `./web-app/run-local.sh`. O comando de PowerShell considera o Git instalado em `C:\Program Files\Git`; ajuste esse caminho se necessário. Evite usar apenas `bash` no PowerShell: neste Windows ele resolve para o Bash do WSL.
+
+Abra **http://127.0.0.1:8000** e entre com seu administrador. Mantenha o terminal aberto; **Ctrl+C** encerra a aplicação. O script usa `.venv/Scripts/python.exe`, carrega a chave de sessão local e a configuração MQTT provisionada, e desativa cookies seguros somente para este acesso HTTP local. Não é necessário ativar a `.venv` manualmente.
+
+Para comunicar com as etiquetas, inicie também o broker em **outro terminal**. A partir da raiz do repositório, no PowerShell:
+
+```powershell
+& "C:\Program Files\Git\bin\bash.exe" ./web-app/run-broker.sh
+```
+
+No Git Bash, use `bash web-app/run-broker.sh`. Sem o broker disponível, o catálogo e o frontend continuam acessíveis, mas o envio e o recebimento de estados dependem da reconexão MQTT. Não execute uma segunda instância da aplicação na mesma porta 8000.
+
 ## Instalação da aplicação
 
 Python 3.12 ou superior. Execute a partir de `web-app/`:

@@ -18,6 +18,7 @@ from .broker_admin import BrokerError, BrokerManager
 from .config import Settings
 from .db import AdminUser, Product, Tag, create_tables, make_engine
 from .mqtt import MqttService
+from .publisher import configuration_version, content_for_tag
 
 
 ROOT = Path(__file__).parent
@@ -25,6 +26,24 @@ templates = Jinja2Templates(directory=str(ROOT / "templates"))
 templates.env.filters["price"] = catalog.format_price
 templates.env.filters["utc_timestamp"] = catalog.format_utc_timestamp
 templates.env.filters["utc_input"] = catalog.format_utc_input
+
+
+def synchronization_status(session: Session, tag: Tag) -> dict[str, str]:
+    """Compare the latest reported content with the catalog, even before MQTT staging."""
+    current = configuration_version(content_for_tag(session, tag))
+    if tag.last_received_at is None:
+        state, label = "unseen", "Aguardando status da etiqueta"
+        description = "A etiqueta ainda não enviou um status para comparar com a configuração atual."
+    elif not tag.confirmed_version:
+        state, label = "unconfirmed", "Sincronização não confirmada"
+        description = "Recebemos um status, mas a etiqueta não informou a versão da configuração."
+    elif tag.confirmed_version == current:
+        state, label = "synced", "Etiqueta sincronizada"
+        description = "A versão do último status recebido corresponde à configuração atual do catálogo."
+    else:
+        state, label = "changed", "Etiqueta não sincronizada"
+        description = "A versão do último status recebido difere da configuração atual. Aguardando atualização da etiqueta."
+    return {"current": current, "sync_state": state, "sync_label": label, "sync_description": description}
 
 
 def create_app(settings: Settings | None = None, broker_manager: BrokerManager | None = None) -> FastAPI:
@@ -338,6 +357,7 @@ def create_app(settings: Settings | None = None, broker_manager: BrokerManager |
                 state, label = delivery_state(tag)
                 counts[state] += 1
                 items.append({
+                    **synchronization_status(session, tag),
                     "identifier": tag.identifier,
                     "state": state,
                     "label": label,
@@ -455,10 +475,10 @@ def create_app(settings: Settings | None = None, broker_manager: BrokerManager |
             tags = session.exec(select(Tag).order_by(Tag.identifier)).all()
             products = session.exec(select(Product).order_by(Product.name, Product.id)).all()
             product_names = {product.id: product.name for product in products}
-        tag_rows = []
-        for tag in tags:
-            state, label = delivery_state(tag)
-            tag_rows.append({"tag": tag, "state": state, "label": label})
+            tag_rows = []
+            for tag in tags:
+                state, label = delivery_state(tag)
+                tag_rows.append({"tag": tag, "state": state, "label": label, **synchronization_status(session, tag)})
         return render(request, "tags.html", status_code=status_code, tag_rows=tag_rows, products=products, product_names=product_names, error=error, identifier=identifier, mqtt_enabled=mqtt_service is not None, broker_connected=bool(mqtt_service and mqtt_service.connected.is_set()))
 
     @app.get("/etiquetas", response_class=HTMLResponse)

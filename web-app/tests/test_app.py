@@ -1,3 +1,4 @@
+import json
 import re
 import sqlite3
 from datetime import datetime, timedelta, timezone
@@ -12,6 +13,8 @@ from smart_price_tag.authentication import create_first_admin
 from smart_price_tag.catalog import format_price
 from smart_price_tag.config import Settings
 from smart_price_tag.db import AdminUser, Product, Tag
+from smart_price_tag.monitor import record_status
+from smart_price_tag.publisher import stage_configs
 from smart_price_tag.web import create_app
 
 
@@ -49,6 +52,67 @@ def post_with_csrf(client, path, data, form_page="/produtos"):
 
 def sample_product(**overrides):
     return {"name": "Café", "price": "12,90", "description": "Pacote 500 g", "ean13": "7891234567895", **overrides}
+
+
+def test_tag_synchronization_follows_latest_status_and_current_catalog(client_and_app):
+    client, app = client_and_app
+    add_admin(app)
+    log_in(client)
+    post_with_csrf(client, "/produtos/novo", sample_product(), "/produtos/novo")
+    identifier = "A1B2C3D4E5F6"
+    post_with_csrf(client, "/etiquetas", {"identifier": identifier}, "/etiquetas")
+    with Session(app.state.engine) as session:
+        product_id = session.exec(select(Product)).one().id
+    post_with_csrf(client, f"/etiquetas/{identifier}/vinculo", {"product_id": str(product_id)}, "/etiquetas")
+
+    def snapshot():
+        return client.get("/mqtt/estado").json()["tags"][0]
+
+    def report(version):
+        with Session(app.state.engine) as session:
+            record_status(session, f"spt/{identifier}/status", json.dumps({
+                "versao": version, "tensao_mv": 3900, "rssi": -61,
+                "firmware": "test", "instante": 0,
+            }).encode())
+
+    assert snapshot()["sync_state"] == "unseen"
+    report("")
+    assert snapshot()["sync_state"] == "unconfirmed"
+    report("00000000")
+    assert snapshot()["sync_state"] == "changed"
+
+    with Session(app.state.engine) as session:
+        stage_configs(session, b"x" * 32)
+        tag = session.get(Tag, identifier)
+        tag.published_version = tag.desired_version
+        tag.published_sequence = tag.sequence
+        session.add(tag)
+        session.commit()
+    # Publication alone cannot confirm that the tag has the current data.
+    assert snapshot()["sync_state"] == "changed"
+    current = snapshot()["current"]
+    report(current)
+    assert snapshot()["sync_state"] == "synced"
+    assert snapshot()["sync_label"] == "Etiqueta sincronizada"
+    assert 'data-sync-state="synced"' in client.get("/etiquetas").text
+
+    # With MQTT disabled, staging does not run on edits. Compare to the catalog anyway.
+    edited = post_with_csrf(client, f"/produtos/{product_id}/editar", sample_product(price="15,00"), f"/produtos/{product_id}/editar")
+    assert edited.status_code == 303
+    assert snapshot()["desired"] == current
+    assert snapshot()["current"] != current
+    assert snapshot()["sync_state"] == "changed"
+    assert 'data-sync-state="changed"' in client.get("/etiquetas").text
+    report(snapshot()["current"])
+    assert snapshot()["sync_state"] == "synced"
+
+    post_with_csrf(client, f"/etiquetas/{identifier}/vinculo", {"product_id": ""}, "/etiquetas")
+    assert snapshot()["sync_state"] == "changed"
+    report(snapshot()["current"])
+    assert snapshot()["sync_state"] == "synced"
+    # A newer status without a version supersedes the previous confirmation.
+    report("")
+    assert snapshot()["sync_state"] == "unconfirmed"
 
 
 def test_first_admin_bcrypt_login_logout_and_route_protection(client_and_app):

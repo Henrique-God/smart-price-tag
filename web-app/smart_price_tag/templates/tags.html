@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Etiquetas{% endblock %}
 {% block content %}
-<div class="page-heading"><div><p class="eyebrow">Gerenciamento</p><h1>Etiquetas</h1><p class="muted">Cadastre pelo MAC, associe um produto e clique em uma ESP para abrir seu painel.</p></div></div>
+<div class="page-heading"><div><p class="eyebrow">Gerenciamento</p><h1>Etiquetas</h1><p class="muted">Acompanhe a sincronização e abra uma etiqueta para consultar o último status recebido.</p></div></div>
 <div class="info-banner" role="note">{% if not mqtt_enabled %}MQTT não configurado. Consulte a <a href="/mqtt">tela MQTT</a> para ver a configuração necessária.{% elif not broker_connected %}Broker desconectado. As alterações salvas serão publicadas após a reconexão. <a href="/mqtt">Ver MQTT</a>.{% else %}Broker conectado. A confirmação depende do estado enviado pela etiqueta. <a href="/mqtt">Ver MQTT</a>.{% endif %}</div>
 <section class="card create-tag" aria-labelledby="new-tag">
   <h2 id="new-tag">Cadastrar etiqueta</h2>
@@ -16,26 +16,34 @@
 <div class="tag-grid">
   {% for row in tag_rows %}
   {% set tag = row.tag %}
-  <details id="tag-{{ tag.identifier }}" class="card tag-card tag-dashboard" data-live-tag="{{ tag.identifier }}">
+  <details id="tag-{{ tag.identifier }}" class="card tag-card tag-dashboard" data-live-tag="{{ tag.identifier }}" data-sync-state="{{ row.sync_state }}">
     <summary class="tag-summary">
-      <span class="tag-summary-id"><span class="eyebrow">ESP</span><strong><code>{{ tag.identifier }}</code></strong></span>
-      <span class="badge mqtt-badge-{{ row.state }}" data-live-field="state">{{ row.label }}</span>
-      <span class="tag-summary-last">Último estado: <span data-live-field="received">{% if tag.last_received_at %}{{ tag.last_received_at|utc_timestamp }}{% else %}Nenhum estado recebido{% endif %}</span></span>
-      <span class="tag-summary-hint"><span class="tag-hint-closed">Abrir painel ↓</span><span class="tag-hint-open">Fechar painel ↑</span></span>
+      <span class="tag-summary-id"><span class="eyebrow">Etiqueta · ESP</span><strong><code>{{ tag.identifier }}</code></strong><span class="tag-summary-product">{{ product_names.get(tag.product_id, 'Produto indisponível') if tag.product_id else 'Nenhum produto vinculado' }}</span></span>
+      <span class="tag-summary-status"><span class="sync-badge sync-badge-{{ row.sync_state }}" data-live-field="sync_label" role="status">{{ row.sync_label }}</span><span class="tag-summary-hint"><span class="tag-hint-closed">Ver painel</span><span class="tag-hint-open">Fechar painel</span><svg class="tag-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></span></span>
     </summary>
     <div class="tag-dashboard-body">
-      <p class="tag-product">{% if tag.product_id %}Produto vinculado: <strong>{{ product_names.get(tag.product_id, 'Produto indisponível') }}</strong>{% else %}<span class="muted">Nenhum produto vinculado.</span>{% endif %}</p>
-      <div class="tag-dashboard-grid" aria-label="Dados recebidos e configuração da etiqueta {{ tag.identifier }}">
-        <div class="tag-stat"><span>Último estado recebido</span><strong data-live-field="received">{% if tag.last_received_at %}{{ tag.last_received_at|utc_timestamp }}{% else %}Nenhum estado recebido{% endif %}</strong></div>
-        <div class="tag-stat"><span>Sinal Wi-Fi</span><strong data-live-field="rssi">{% if tag.rssi is not none %}{{ tag.rssi }} dBm{% else %}Sem leitura{% endif %}</strong></div>
-        <div class="tag-stat"><span>Bateria</span><strong data-live-field="battery">{% if tag.battery_mv is not none %}{{ tag.battery_mv }} mV{% else %}Sem leitura{% endif %}</strong></div>
-        <div class="tag-stat"><span>Firmware</span><strong data-live-field="firmware">{{ tag.firmware or 'Sem leitura' }}</strong></div>
-        <div class="tag-stat"><span>Versão desejada</span><strong data-live-field="desired">{{ tag.desired_version or '—' }}</strong></div>
-        <div class="tag-stat"><span>Versão publicada</span><strong data-live-field="published">{{ tag.published_version or '—' }}</strong></div>
-        <div class="tag-stat"><span>Versão confirmada pela ESP</span><strong data-live-field="confirmed">{{ tag.confirmed_version or 'Não informada' }}</strong></div>
-      </div>
-      <p class="muted tag-dashboard-note">O último estado indica quando houve comunicação, sem confirmar que a conexão continua ativa. A configuração aparece como aplicada quando a ESP informa a versão atual.</p>
-      <form method="post" action="/etiquetas/{{ tag.identifier }}/vinculo" class="form-stack tag-link-form">
+      <section aria-labelledby="status-{{ tag.identifier }}">
+        <div class="tag-section-heading"><h2 id="status-{{ tag.identifier }}">Status da etiqueta</h2><span class="tag-update-note">Atualização a cada 5 segundos</span></div>
+        <div class="tag-dashboard-grid">
+          <div class="tag-stat tag-stat-contact"><span class="tag-stat-label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Último contato</span><strong data-live-field="received">{% if tag.last_received_at %}{{ tag.last_received_at|utc_timestamp }}{% else %}Nenhum estado recebido{% endif %}</strong><small>Recebimento no servidor</small></div>
+          <div class="tag-stat"><span class="tag-stat-label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M2 8a16 16 0 0 1 20 0M5 12a11 11 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0"/><circle cx="12" cy="20" r="1" fill="currentColor" stroke="none"/></svg>Sinal Wi-Fi</span><strong data-live-field="rssi">{% if tag.rssi is not none %}{{ tag.rssi }} dBm{% else %}Sem leitura{% endif %}</strong><small>RSSI reportado pela etiqueta</small></div>
+          <div class="tag-stat"><span class="tag-stat-label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="2" y="6" width="18" height="12" rx="2"/><path d="M22 10v4M6 9v6M10 9v6M14 9v6"/></svg>Bateria</span><strong data-live-field="battery">{% if tag.battery_mv is not none %}{{ tag.battery_mv }} mV{% else %}Sem leitura{% endif %}</strong><small>Tensão reportada pela etiqueta</small></div>
+          <div class="tag-stat"><span class="tag-stat-label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg>Firmware</span><strong data-live-field="firmware">{{ tag.firmware or 'Sem leitura' }}</strong><small>Versão instalada no dispositivo</small></div>
+        </div>
+        <p class="muted tag-dashboard-note">As leituras são do último status recebido; o último contato não indica uma conexão ativa agora.</p>
+      </section>
+      <section class="tag-sync-panel" aria-labelledby="sync-{{ tag.identifier }}">
+        <h2 id="sync-{{ tag.identifier }}">Sincronização da configuração</h2>
+        <p class="tag-sync-description" data-live-field="sync_description">{{ row.sync_description }}</p>
+        <dl class="tag-version-grid">
+          <div><dt>Configuração atual no app</dt><dd><code data-live-field="current">{{ row.current }}</code></dd></div>
+          <div><dt>Última versão publicada</dt><dd><code data-live-field="published">{{ tag.published_version or '—' }}</code></dd></div>
+          <div><dt>Última versão na etiqueta</dt><dd><code data-live-field="confirmed">{{ tag.confirmed_version or 'Não informada' }}</code></dd></div>
+        </dl>
+        <p class="tag-delivery"><span>Envio MQTT</span><span class="badge mqtt-badge-{{ row.state }}" data-live-field="state">{{ row.label }}</span></p>
+      </section>
+      <form method="post" action="/etiquetas/{{ tag.identifier }}/vinculo" class="tag-link-form" aria-labelledby="link-{{ tag.identifier }}">
+        <div class="tag-link-heading"><h2 id="link-{{ tag.identifier }}">Vínculo com produto</h2><p class="muted">{% if tag.product_id %}Vinculado a <strong>{{ product_names.get(tag.product_id, 'Produto indisponível') }}</strong>.{% else %}Selecione o produto que será exibido nesta etiqueta.{% endif %}</p></div>
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <div class="field"><label for="product-{{ loop.index }}">Produto para esta etiqueta</label><select id="product-{{ loop.index }}" name="product_id"><option value="">Sem produto (desvincular)</option>{% for product in products %}<option value="{{ product.id }}" {% if tag.product_id == product.id %}selected{% endif %}>{{ product.name }} · {{ product.ean13 }}</option>{% endfor %}</select></div>
         <button type="submit" class="button button-secondary">Salvar vínculo</button>
