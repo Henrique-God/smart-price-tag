@@ -129,9 +129,9 @@ void draw_red_screen(Adafruit_GFX& gfx, void* ctx) {
 }
 
 // Dados das telas do render. V1 a V3 são os vetores da seção 9 do contrato.
-const Product V1_PRODUCT = {"Dipirona 500 mg", 1490, "caixa com 20 comprimidos", "7891234567895"};
-const Promotion V1_PROMOTION = {1190, 1795680000};
-const Product V2_PRODUCT = {"Café Pilão 500 g", 2490, "torrado e moído", "7896089012453"};
+const Product V1_PRODUCT = {"Chopp Cremoso 500 ml", 2090, "Só o luxo", "7891234567895"};
+const Promotion V1_PROMOTION = {1290, 1795680000};
+const Product V2_PRODUCT = {"Chopp Cremoso 500 ml", 2490, "torrado e moído", "7896089012453"};
 const Product WORST_PRODUCT = {"WWWWWWWWWWWWWWWWWWWW", 99999, "WWWWWWWWWWWWWWWWWWWWWWWWWWWWWW",
                                "7891234567895"};
 const Product WORST_ACCENTS_PRODUCT = {"ÁÉÍÓÚÇÃÕÂÊÔÀÁÉÍÓÚÇÃÕ", 99999,
