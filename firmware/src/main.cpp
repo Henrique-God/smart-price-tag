@@ -69,6 +69,15 @@ void network_step(const char* tag_id) {
     static ConfigEnvelope envelope;
     const MqttFetchResult result = mqtt_fetch_config(&envelope, budget_ms(MQTT_FETCH_TIMEOUT_MS));
     SPT_LOGI(TAG, "busca da configuração: %s", fetch_result_name(result));
+    if (result == MqttFetchResult::Received) {
+        // TODO(F5): último seq aceito vindo do store; por enquanto só registra no log
+        const uint32_t last_seq = 0;
+        uint32_t seq = 0;
+        const AuthResult auth = auth_verify(envelope.data, envelope.data_len,
+                                            envelope.hmac_hex, last_seq, &seq);
+        SPT_LOGI(TAG, "autenticação: %s, seq=%lu", auth_result_name(auth),
+                 static_cast<unsigned long>(seq));
+    }
     net_sync_time(budget_ms(NTP_TIMEOUT_MS));
 
     TagStatus status = {};
@@ -91,6 +100,9 @@ void setup() {
     const char* tag_id = power_tag_id();
     SPT_LOGI(TAG, "etiqueta: %s", tag_id[0] != '\0' ? tag_id : "(indisponível)");
 
+    if (!auth_begin()) {
+        SPT_LOGE(TAG, "sem chave HMAC: nenhuma configuração será aceita");
+    }
     network_step(tag_id);
 
     // TODO(F5): ciclo completo dentro de POWER_CYCLE_DEADLINE_MS:
