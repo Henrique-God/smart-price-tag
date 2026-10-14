@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 
+#include <Arduino.h>
 #include <esp_sleep.h>
 #include <esp_system.h>
 
@@ -70,8 +71,8 @@ uint16_t power_battery_mv() {
 }
 
 uint32_t power_deadline_remaining_ms() {
-    // TODO(F5): POWER_CYCLE_DEADLINE_MS - millis(), saturando em 0
-    return 0;
+    const uint32_t elapsed = millis();
+    return elapsed >= POWER_CYCLE_DEADLINE_MS ? 0 : POWER_CYCLE_DEADLINE_MS - elapsed;
 }
 
 void power_deep_sleep(uint32_t seconds) {
