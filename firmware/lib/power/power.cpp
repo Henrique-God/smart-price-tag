@@ -3,6 +3,7 @@
 #include <stdio.h>
 
 #include <Arduino.h>
+#include <driver/rtc_io.h>
 #include <esp_sleep.h>
 #include <esp_system.h>
 
@@ -66,8 +67,9 @@ const char* power_tag_id() {
 }
 
 uint16_t power_battery_mv() {
-    // TODO(F5): ler PIN_BATTERY (ADC1) com calibração e multiplicar por BATTERY_DIVIDER
-    return 0;
+    // analogReadMilliVolts já aplica a calibração do eFuse; sem bateria (só USB) fica perto de 0
+    const uint32_t mv = analogReadMilliVolts(PIN_BATTERY) * BATTERY_DIVIDER;
+    return mv > UINT16_MAX ? UINT16_MAX : static_cast<uint16_t>(mv);
 }
 
 uint32_t power_deadline_remaining_ms() {
@@ -77,6 +79,11 @@ uint32_t power_deadline_remaining_ms() {
 
 void power_deep_sleep(uint32_t seconds) {
     esp_sleep_enable_timer_wakeup(static_cast<uint64_t>(seconds) * 1000000ULL);
-    // TODO(F5): habilitar despertar pelo botão (ext0 em PIN_BUTTON, nível baixo) com pull-up RTC
+    // Botão ativo em nível baixo; o pull-up do domínio RTC continua ligado durante o sono.
+    // Quem usar o pino como GPIO comum depois de um despertar por ext0 precisa de rtc_gpio_deinit.
+    const gpio_num_t button = static_cast<gpio_num_t>(PIN_BUTTON);
+    rtc_gpio_pullup_en(button);
+    rtc_gpio_pulldown_dis(button);
+    esp_sleep_enable_ext0_wakeup(button, 0);
     esp_deep_sleep_start();
 }
