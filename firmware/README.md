@@ -144,6 +144,7 @@ include/   board.h (pinos), secrets.example.h, spt_secrets.h
 src/       main.cpp: orquestra o ciclo (roda uma vez em setup())
 src/bancada/  programa de teste de hardware (só no ambiente `bancada`)
 test/host/    testes que rodam no PC, sem placa (g++)
+test/test_auth/  teste Unity do `auth` na placa (`pio test -e demo -f test_auth`)
 lib/       um módulo por pasta, cada um com <modulo>.h (interface) e <modulo>.cpp
 ```
 

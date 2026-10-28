@@ -52,7 +52,8 @@ No Windows, a porta aparece como `COMx` (liste com `pio device list`). Se o uplo
 | `display` (driver do e-paper) | **pronto**: `display_begin`, `display_draw_full`, `display_last_refresh_ms`, `display_hibernate` |
 | Programa de bancada (`src/bancada/bancada.cpp`) | **pronto**, com o autoteste do EAN-13 (`e`) e as telas do `render` (`1` a `5`) |
 | `render` | **implementado**: EAN-13 conferido no PC (`test/host/test_ean13.cpp`); falta conferir os layouts no visor (critérios do F2) |
-| `net`, `mqtt`, `auth`, `config`, `store`, `power` (bateria, prazo, botão), ciclo no `main` | stubs com `TODO(F3)` a `TODO(F5)` |
+| `auth` | **pronto**: HMAC-SHA256 truncado, comparação em tempo constante e `seq`; vetores V1–V6 conferidos na placa (`pio test -e demo -f test_auth`); o `main` só registra o resultado no log, com último `seq` 0 até a F5 |
+| `net`, `mqtt`, `config`, `store`, `power` (bateria, prazo, botão), ciclo no `main` | stubs com `TODO(F3)` a `TODO(F5)` |
 
 ```bash
 grep -rn "TODO(F" src lib include
@@ -148,10 +149,12 @@ Entrega: `auth_begin`, `auth_verify`.
 
 Critérios (vetores da seção 9 do contrato, chave `d4c08c07...`):
 
-- [ ] V1 com último seq 0 → `Ok`, seq 42; V1 de novo com último seq 42 → `Unchanged`.
-- [ ] V2 com último 42 → `Ok`; V3 com último 43 → `Ok`.
-- [ ] V4 → `BadHmac`; V5 com último 42 → `Replay`; V6 → `BadHmac`.
-- [ ] `hmac_hex` com tamanho errado ou caracteres não hex → `Malformed`; chave inválida → `auth_begin` retorna `false` e `auth_verify` retorna `NoKey`.
+Conferidos na placa, sem visor nem rede, com o teste Unity `test/test_auth/` (feche o monitor antes): `pio test -e demo -f test_auth --upload-port COM5 --test-port COM5`. Depois, grave o firmware de novo.
+
+- [x] V1 com último seq 0 → `Ok`, seq 42; V1 de novo com último seq 42 → `Unchanged`.
+- [x] V2 com último 42 → `Ok`; V3 com último 43 → `Ok`.
+- [x] V4 → `BadHmac`; V5 com último 42 → `Replay`; V6 → `BadHmac`.
+- [x] `hmac_hex` com tamanho errado ou caracteres não hex → `Malformed`; chave inválida → `auth_begin` retorna `false` e `auth_verify` retorna `NoKey`.
 
 ### F5: ciclo de energia e agendamento (S7)
 

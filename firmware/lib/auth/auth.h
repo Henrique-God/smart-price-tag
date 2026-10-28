@@ -24,8 +24,16 @@ enum class AuthResult : uint8_t {
 // Carrega a chave HMAC de secrets.h. Retorna false se a chave for inválida.
 bool auth_begin();
 
+// Carrega a chave a partir de 64 caracteres hex (32 bytes). Usada por auth_begin()
+// e pelos testes com a chave dos vetores do contrato. Com chave inválida, descarta
+// qualquer chave anterior e retorna false (auth_verify passa a retornar NoKey).
+bool auth_begin_with_key_hex(const char* key_hex);
+
 // Verifica `data` (texto exato de `dados`, `data_len` bytes) contra `hmac_hex`
-// (32 caracteres hex) e compara seu `seq` com `last_seq`.
+// (32 caracteres hex minúsculos) e compara seu `seq` com `last_seq`.
+// Ordem: chave carregada (NoKey) -> formato de hmac_hex (Malformed) -> HMAC em
+// tempo constante (BadHmac) -> só então interpreta o JSON para ler `seq`
+// (Malformed se ausente ou fora de 1..2147483647) -> comparação com last_seq.
 // Com resultado Ok, Unchanged ou Replay, escreve o `seq` lido em *out_seq.
 AuthResult auth_verify(const char* data, size_t data_len, const char* hmac_hex,
                        uint32_t last_seq, uint32_t* out_seq);
