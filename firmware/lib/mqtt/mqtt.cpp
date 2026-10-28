@@ -23,6 +23,8 @@ constexpr size_t TOPIC_SIZE = 4 + SPT_TAG_ID_SIZE + 7;
 // Mensagem de estado: no máximo 256 bytes (CONTRATO §7).
 constexpr size_t STATUS_SIZE = 256;
 
+constexpr uint16_t KEEPALIVE_S = 60;
+
 constexpr uint32_t RETRY_MS = 250;
 constexpr uint32_t POLL_MS = 10;
 
@@ -118,6 +120,9 @@ bool mqtt_connect(const char* tag_id, uint32_t timeout_ms) {
     }
     client.setServer(MQTT_HOST, MQTT_PORT);
     client.setCallback(on_message);
+    // O redesenho (~27 s) bloqueia o loop(); com o padrão de 15 s o broker derrubaria
+    // a sessão (1,5 x keepalive) antes de o estado ser publicado.
+    client.setKeepAlive(KEEPALIVE_S);
 
     const uint32_t start = millis();
     while (true) {
@@ -226,9 +231,25 @@ bool mqtt_publish_status(const TagStatus& status) {
     return true;
 }
 
-void mqtt_disconnect() {
+void mqtt_disconnect(uint32_t timeout_ms) {
     if (client.connected()) {
-        client.disconnect();
+        // PubSubClient::disconnect() fecha o socket logo após o DISCONNECT, e o rádio é
+        // desligado em seguida: o estado (QoS 0, sem confirmação) às vezes ficava no buffer
+        // do TCP e nunca saía. Aqui o DISCONNECT vai direto e espera-se o broker fechar a
+        // conexão, o que ele só faz depois de ler tudo o que veio antes.
+        static const uint8_t DISCONNECT_PACKET[] = {0xE0, 0x00};
+        wifi_client.write(DISCONNECT_PACKET, sizeof(DISCONNECT_PACKET));
+        const uint32_t start = millis();
+        while (wifi_client.connected() && millis() - start < timeout_ms) {
+            delay(POLL_MS);
+        }
+        if (wifi_client.connected()) {
+            SPT_LOGW(TAG, "broker não fechou a conexão em %lu ms: o estado pode não ter chegado",
+                     static_cast<unsigned long>(timeout_ms));
+        } else {
+            SPT_LOGD(TAG, "broker fechou a conexão em %lu ms",
+                     static_cast<unsigned long>(millis() - start));
+        }
     }
     wifi_client.stop();
 }

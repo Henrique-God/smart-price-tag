@@ -31,5 +31,6 @@ MqttFetchResult mqtt_fetch_config(ConfigEnvelope* out, uint32_t timeout_ms);
 // Serializa `status` em JSON e publica em spt/{id}/status.
 bool mqtt_publish_status(const TagStatus& status);
 
-// Encerra a sessão com o broker.
-void mqtt_disconnect();
+// Encerra a sessão com o broker, esperando até `timeout_ms` que ele feche a
+// conexão: só então o que foi publicado antes (QoS 0) certamente chegou.
+void mqtt_disconnect(uint32_t timeout_ms);
