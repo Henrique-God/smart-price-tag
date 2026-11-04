@@ -14,12 +14,12 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from smart_price_tag.catalog import link_product, register_tag, save_product, save_promotion
 from smart_price_tag.authentication import create_first_admin
 from smart_price_tag.config import Settings
-from smart_price_tag.db import Tag, create_tables, make_engine
+from smart_price_tag.db import Publication, Tag, create_tables, make_engine
 from smart_price_tag.monitor import InvalidStatus, record_status
 from smart_price_tag.publisher import serialize, stage_configs
 from smart_price_tag.security import derive_tag_key
@@ -180,8 +180,29 @@ def test_mosquitto_acl_retained_reconnect_and_status(tmp_path):
                     return tag.published_sequence == tag.sequence and tag.sequence > 0
 
             wait_until(published)
-            assert "Aguardando primeiro estado" in client.get("/etiquetas").text
-            assert "Aplicada" not in client.get("/etiquetas").text
+
+            def delivery():
+                return next(item for item in client.get("/mqtt/estado").json()["tags"] if item["identifier"] == TAG_A)
+
+            assert delivery()["state"] == "waiting"
+            assert "No broker · aguardando status da etiqueta" in client.get("/etiquetas").text
+
+            # The broker ACK fills publicada_em and the topic actually used.
+            def current_publication():
+                with Session(app.state.engine) as session:
+                    tag = session.get(Tag, TAG_A)
+                    rows = session.exec(select(Publication).where(Publication.identifier == TAG_A)).all()
+                    return tag.sequence, len(rows), next(row for row in rows if row.sequence == tag.sequence)
+
+            sequence, row_count, row = current_publication()
+            assert row.published_at is not None and row.topic == f"spt/{TAG_A}/config"
+            assert row.republished_at is None
+
+            # Republishing resends the same retained message: same seq, no new row, only the resend time.
+            app.state.mqtt_service.request_republish()
+            wait_until(lambda: current_publication()[2].republished_at is not None)
+            assert current_publication()[:2] == (sequence, row_count)
+            assert delivery()["pub_seq"] == f"seq #{sequence}"
             command = [sub, "-h", "127.0.0.1", "-p", str(port), "-u", TAG_A, "-P", "fixture-password", "-t", f"spt/{TAG_A}/config", "-C", "1", "-W", "3"]
             retained = subprocess.run(command, check=True, capture_output=True, text=True, timeout=5)
             body = json.loads(json.loads(retained.stdout)["dados"])
@@ -208,7 +229,8 @@ def test_mosquitto_acl_retained_reconnect_and_status(tmp_path):
                 with Session(app.state.engine) as session:
                     return session.get(Tag, TAG_A).confirmed_version == body["versao"]
             wait_until(confirmed)
-            assert "Aplicada" in client.get("/etiquetas").text
+            assert delivery()["state"] == "applied"
+            assert "Aplicada pela etiqueta" in client.get("/etiquetas").text
 
             process.terminate()
             process.wait(timeout=5)
@@ -219,10 +241,12 @@ def test_mosquitto_acl_retained_reconnect_and_status(tmp_path):
             with Session(app.state.engine) as session:
                 tag = session.get(Tag, TAG_A)
                 assert tag.published_sequence < tag.sequence and tag.confirmed_version == body["versao"] and tag.confirmed_sequence < tag.sequence
-            assert "Publicação pendente" in client.get("/etiquetas").text
+            assert delivery()["state"] == "pending"
+            assert "Aguardando envio ao broker" in client.get("/etiquetas").text
             process = subprocess.Popen([broker, "-c", str(tmp_path / "mosquitto.conf")], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             wait_until(published)
-            assert "Estado recebido · aguardando confirmação" in client.get("/etiquetas").text
+            assert delivery()["state"] == "received"
+            assert "Status recebido · versão ainda não confirmada" in client.get("/etiquetas").text
             retained = subprocess.run(command, check=True, capture_output=True, text=True, timeout=5)
             assert json.loads(json.loads(retained.stdout)["dados"])["produto"]["preco"] == 1300
 
@@ -241,7 +265,7 @@ def test_mosquitto_acl_retained_reconnect_and_status(tmp_path):
             with Session(app.state.engine) as session:
                 tag = session.get(Tag, TAG_A)
                 assert tag.published_sequence < tag.sequence
-            assert "Publicação pendente" in client.get("/etiquetas").text
+            assert delivery()["state"] == "pending"
     finally:
         if process.poll() is None:
             process.terminate()

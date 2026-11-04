@@ -47,6 +47,32 @@ class Tag(SQLModel, table=True):
     firmware: str | None = Field(default=None, sa_column=Column("firmware", String(64)))
     last_seen_at: int | None = Field(default=None, sa_column=Column("ultima_comunicacao", Integer))
     last_received_at: int | None = Field(default=None, sa_column=Column("ultimo_recebimento", Integer))
+    rejected_status_reason: str | None = Field(default=None, sa_column=Column("status_rejeitado_motivo", String(200)))
+    rejected_status_at: int | None = Field(default=None, sa_column=Column("status_rejeitado_em", Integer))
+
+
+class Publication(SQLModel, table=True):
+    """One configuration message signed for a tag: a new row per new `seq`.
+
+    Republishing the same retained message keeps the row (and its `seq`) and
+    only records the resend time. There are no foreign keys, so the history
+    survives the deletion of a product that was once linked.
+    """
+
+    __tablename__ = "publicacao"
+
+    id: int | None = Field(default=None, primary_key=True)
+    identifier: str = Field(sa_column=Column("etiqueta_identificador", String(12), nullable=False, index=True))
+    sequence: int = Field(sa_column=Column("seq", Integer, nullable=False))
+    version: str = Field(sa_column=Column("versao", String(8), nullable=False))
+    data: str = Field(sa_column=Column("dados", String, nullable=False))
+    hmac: str = Field(sa_column=Column("hmac", String(32), nullable=False))
+    topic: str | None = Field(default=None, sa_column=Column("topico", String(64)))
+    product_id: int | None = Field(default=None, sa_column=Column("produto_id", Integer))
+    reason: str = Field(sa_column=Column("motivo", String(20), nullable=False))
+    prepared_at: int = Field(sa_column=Column("preparada_em", Integer, nullable=False))
+    published_at: int | None = Field(default=None, sa_column=Column("publicada_em", Integer))
+    republished_at: int | None = Field(default=None, sa_column=Column("republicada_em", Integer))
 
 
 def make_engine(path: Path):

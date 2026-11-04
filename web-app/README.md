@@ -32,6 +32,28 @@ Para comunicar com as etiquetas, inicie também o broker em **outro terminal**. 
 
 No Git Bash, use `bash web-app/run-broker.sh`. Sem o broker disponível, o catálogo e o frontend continuam acessíveis, mas o envio e o recebimento de estados dependem da reconexão MQTT. Não execute uma segunda instância da aplicação na mesma porta 8000.
 
+## Executar localmente no macOS
+
+A partir de `web-app/`, com Python 3.12+ (no `PATH` ou no pyenv) e, para o MQTT, `brew install mosquitto`:
+
+```bash
+./run-local-mac.sh
+```
+
+O script procura um Python 3.12+, cria o venv em `~/.venvs/spt` (troque com `SPT_VENV`; fica fora da pasta do iCloud), reinstala o `requirements.txt` quando ele muda, roda `broker_admin` se o Mosquitto estiver instalado e o broker ainda não estiver provisionado, pede o primeiro administrador se não houver nenhum e sobe o Uvicorn em `127.0.0.1:8000` (troque com `SPT_PORT`). Ele não sobrescreve `data/` nem `secrets/`. Para o broker, em outro terminal:
+
+```bash
+/opt/homebrew/opt/mosquitto/sbin/mosquitto -c data/broker/mosquitto.conf -v
+```
+
+Não use `brew services start mosquitto`: ele sobe a configuração padrão na porta 1883, e o broker do projeto escuta em **1884** com `data/broker/mosquitto.conf`. Se a pasta do repositório estiver no iCloud e o git falhar com `Resource deadlock avoided`, baixe os arquivos pelo Finder (“Baixar agora”) antes de continuar. Testes no Mac:
+
+```bash
+~/.venvs/spt/bin/python -m pip install -r requirements-dev.txt
+~/.venvs/spt/bin/python -m pytest -q
+node --check smart_price_tag/static/tag_status.js
+```
+
 ## Instalação da aplicação
 
 Python 3.12 ou superior. Execute a partir de `web-app/`:
@@ -107,15 +129,18 @@ $env:SPT_MQTT_MASTER_KEY = (Get-Content secrets/master.key -Raw).Trim()
 python -m uvicorn smart_price_tag.web:create_app --factory --host 127.0.0.1 --port 8000
 ```
 
+Opcionalmente, o monitoramento das etiquetas usa `SPT_TAG_WAKE_INTERVAL_S` (intervalo esperado de despertar, padrão 86400 = 24 h, RNF04), `SPT_TAG_WAKE_MARGIN_S` (margem antes de marcar a etiqueta como atrasada, padrão 3600) e `SPT_BATTERY_LOW_MV` (alerta de tensão baixa, padrão 3500 mV). Para o firmware de demonstração, que desperta a cada 3 min, use por exemplo `SPT_TAG_WAKE_INTERVAL_S=180` e `SPT_TAG_WAKE_MARGIN_S=60`.
+
 Se qualquer variável MQTT estiver definida, as quatro `SPT_MQTT_HOST`, `SPT_MQTT_USERNAME`, `SPT_MQTT_PASSWORD` e `SPT_MQTT_MASTER_KEY` são obrigatórias; `SPT_MQTT_PORT` é opcional (padrão 1883). Sem variáveis MQTT, o backend carrega os arquivos locais preparados pela tela quando eles existem; sem os dois, o catálogo continua utilizável e a interface indica MQTT não configurado. `SPT_DB_PATH`, `SPT_SESSION_SECRET` e `SPT_SECURE_COOKIES` seguem a configuração web anterior.
 
-Após entrar como administrador, abra **MQTT** no menu para ver a conexão com o broker, as publicações pendentes e o último estado recebido de cada etiqueta. Depois do primeiro status, a situação muda para **Estado recebido · aguardando confirmação**; só muda para **Aplicada** quando a versão informada pela ESP corresponde à configuração atual. A aba **Etiquetas** apresenta um painel expansível por ESP com último contato, sinal, bateria, firmware e versões. As duas telas atualizam esses dados a cada 5 segundos enquanto estão abertas. **Republicar todas** solicita o reenvio das configurações retidas sem alterar versões ou sequências; se o broker estiver desconectado, o envio ocorre após a reconexão. Host, porta e usuário são exibidos para diagnóstico, enquanto senha e chave mestra permanecem nos arquivos privados ou nas variáveis de ambiente do processo.
+Após entrar como administrador, abra **MQTT** no menu para ver a conexão com o broker, as publicações pendentes, a sequência atual/publicada, a última publicação e o último status recebido de cada etiqueta. A aba **Etiquetas** apresenta um painel expansível por ESP com o último status (contato com tempo relativo e indicador de atraso, sinal com rótulo heurístico, bateria em mV com alerta de tensão baixa, firmware e último status rejeitado), o conteúdo informado pela etiqueta e a seção **Última mensagem enviada**: tópico, QoS 1 e retenção; `seq` e HMAC em destaque; o `dados` legível e a string bruta assinada (com botão Copiar); a linha do tempo da entrega; e o histórico das últimas publicações com o que mudou entre versões. Depois de salvar um produto, promoção ou vínculo, a confirmação lista as etiquetas afetadas com o `seq` e a versão novos e o link para cada painel. As duas telas atualizam esses dados a cada 5 segundos enquanto estão abertas. Todos os horários são exibidos em America/Sao_Paulo (Brasília); o formulário de promoção continua recebendo o término em UTC. **Republicar todas** solicita o reenvio das configurações retidas sem alterar versões ou sequências; se o broker estiver desconectado, o envio ocorre após a reconexão. Host, porta e usuário são exibidos para diagnóstico, enquanto senha e chave mestra permanecem nos arquivos privados ou nas variáveis de ambiente do processo.
 
 ## Contrato e situação exibida
 
 - O servidor publica `spt/{id}/config` com QoS 1 e `retain=true`; `{id}` usa o mesmo formato de letras do usuário MQTT provisionado. `dados` é uma **string JSON exata**, em UTF-8; `hmac` são os primeiros 16 bytes de HMAC-SHA256 sobre essa string, em hexadecimal. A chave da etiqueta é `HMAC-SHA256(chave_mestra, ID_ASCII)` usando o ID do cadastro em maiúsculas.
 - `dados` contém `produto` (ou `null`), `promocao` (ou `null`), `versao` e `seq`. Preços são inteiros em centavos; `expira_em` é Unix UTC. A versão são os 8 primeiros hexadecimais de SHA-256 do conteúdo `produto`/`promocao` serializado de forma estável. A sequência cresce a cada configuração diferente da etiqueta. Conteúdo igual mantém a versão e evita novo redesenho.
-- O servidor assina `spt/+/status` e aceita JSON com `versao`, `tensao_mv`, `rssi`, `firmware` e `instante` de uma etiqueta cadastrada, usando `{id}` no formato permitido pela ACL. Uma `versao` vazia registra a comunicação sem confirmar a configuração. `instante: 0` indica relógio indisponível, e a interface usa o horário de recebimento do servidor; nesse caso não há ordenação pelo relógio da ESP. Quando o firmware dispõe de relógio, deve enviar segundos Unix válidos e crescentes; estados inválidos, muito grandes ou com instante antigo são ignorados. **“Estado recebido” indica comunicação; “Aplicada” indica que a ESP informou a versão atual.** O status ainda não inclui `seq`, e essa indicação não comprova o conteúdo exibido no visor.
+- Cada `seq` novo é registrado na tabela `publicacao` com `dados` exato, `hmac`, versão, motivo (produto editado, promoção, vínculo, etiqueta cadastrada ou sincronização), `preparada_em`, `publicada_em` (ACK do broker) e o tópico usado. A republicação reenvia a mesma mensagem retida: o `seq` não muda e só `republicada_em` é atualizado. O histórico não guarda chaves nem senhas, apenas o que já trafega no broker.
+- O servidor assina `spt/+/status` e aceita JSON com `versao`, `tensao_mv`, `rssi`, `firmware` e `instante` de uma etiqueta cadastrada, usando `{id}` no formato permitido pela ACL. Uma `versao` vazia registra a comunicação sem confirmar a configuração. `instante: 0` indica relógio indisponível, e a interface usa o horário de recebimento do servidor; nesse caso não há ordenação pelo relógio da ESP. Quando o firmware dispõe de relógio, deve enviar segundos Unix válidos e crescentes; estados inválidos, muito grandes ou com instante antigo são ignorados. A linha do tempo da entrega é **Preparada → Publicada no broker (ACK) → Status recebido → Aplicada pela etiqueta**; “Status recebido” só conta um status chegado depois do ACK da mensagem, e “Aplicada pela etiqueta” indica que a ESP informou a versão atual. O selo do card (“Etiqueta em dia”, “Etiqueta desatualizada”, “Etiqueta ainda sem status”, “Versão não informada”) compara a versão do último status com o catálogo atual. Um status rejeitado fica registrado na própria etiqueta, com motivo e horário. O status ainda não inclui `seq`, e essa indicação não comprova o conteúdo exibido no visor.
 - A publicação confirmada pelo broker é diferente da aplicação no visor. Enquanto o broker está fora, a nova configuração fica gravada no SQLite como publicação pendente. Na reconexão, o servidor publica a configuração mais recente como retida; na inicialização também a republica para recuperar eventual perda dos dados retidos pelo broker. Mantenha `persistence true` no broker.
 
 Os IDs seguem os Quadros 1 e 2 da monografia, inclusive RNF09 (login obrigatório no broker), RNF10 (ACL por etiqueta) e RNF12 (rejeição de configuração falsa/antiga pelo **futuro firmware**). Remissões posteriores da monografia trocam alguns números.

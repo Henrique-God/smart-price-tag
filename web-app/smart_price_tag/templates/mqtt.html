@@ -10,7 +10,7 @@
   <a class="button button-ghost" href="/mqtt">Atualizar situação</a>
 </div>
 {% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
-{% if last_status_issue %}<div class="error" role="alert">Último estado MQTT ignorado em <code>{{ last_status_issue[0] }}</code> ({{ last_status_issue[2]|utc_timestamp }}): {{ last_status_issue[1] }}</div>{% endif %}
+{% if last_status_issue %}<div class="error" role="alert">Último estado MQTT ignorado em <code>{{ last_status_issue[0] }}</code> ({{ last_status_issue[2]|local_time }}): {{ last_status_issue[1] }}</div>{% endif %}
 {% if credentials %}
 <section class="card mqtt-credentials" aria-labelledby="mqtt-credentials-title">
   <h2 id="mqtt-credentials-title">Credenciais de <code>{{ credentials.identifier }}</code></h2>
@@ -71,10 +71,10 @@
 
 <div class="mqtt-metrics" aria-label="Resumo das etiquetas">
   <div class="card mqtt-metric"><span>Total de etiquetas</span><strong>{{ rows|length }}</strong></div>
-  <div class="card mqtt-metric"><span>Pendentes</span><strong data-live-count="pending">{{ counts.pending }}</strong></div>
-  <div class="card mqtt-metric"><span>Sem estado</span><strong data-live-count="waiting">{{ counts.waiting }}</strong></div>
-  <div class="card mqtt-metric"><span>Estado recebido</span><strong data-live-count="received">{{ counts.received }}</strong></div>
-  <div class="card mqtt-metric"><span>Aplicadas</span><strong data-live-count="applied">{{ counts.applied }}</strong></div>
+  <div class="card mqtt-metric"><span>Aguardando envio</span><strong data-live-count="pending">{{ counts.pending }}</strong></div>
+  <div class="card mqtt-metric"><span>No broker, sem status</span><strong data-live-count="waiting">{{ counts.waiting }}</strong></div>
+  <div class="card mqtt-metric"><span>Status sem confirmação</span><strong data-live-count="received">{{ counts.received }}</strong></div>
+  <div class="card mqtt-metric"><span>Aplicadas pela etiqueta</span><strong data-live-count="applied">{{ counts.applied }}</strong></div>
 </div>
 
 <section class="card mqtt-action" aria-labelledby="mqtt-action-title">
@@ -89,19 +89,21 @@
 </section>
 
 <section aria-labelledby="mqtt-tags-title" class="mqtt-tags">
-  <div class="page-heading"><div><h2 id="mqtt-tags-title">Entrega por etiqueta</h2><p class="muted">O acesso abaixo mostra os arquivos locais; reinicie o broker para aplicar alterações. Publicada indica confirmação do broker. Aplicada exige um estado da etiqueta para a configuração atual.</p></div></div>
+  <div class="page-heading"><div><h2 id="mqtt-tags-title">Entrega por etiqueta</h2><p class="muted">O acesso abaixo mostra os arquivos locais; reinicie o broker para aplicar alterações. Publicada indica o ACK do broker; aplicada exige que a etiqueta informe no status a versão atual. Horários de Brasília.</p></div></div>
   {% if rows %}
   <div class="card table-wrap">
     <table>
-      <thead><tr><th scope="col">Etiqueta</th><th scope="col">Acesso MQTT</th><th scope="col">Situação</th><th scope="col">Versões</th><th scope="col">Último estado recebido</th><th scope="col">Ações</th></tr></thead>
+      <thead><tr><th scope="col">Etiqueta</th><th scope="col">Acesso MQTT</th><th scope="col">Situação</th><th scope="col">Sequência</th><th scope="col">Versões</th><th scope="col">Última publicação</th><th scope="col">Último status recebido</th><th scope="col">Ações</th></tr></thead>
       <tbody>
       {% for row in rows %}
       <tr data-live-tag="{{ row.tag.identifier }}">
         <td><a href="/etiquetas#tag-{{ row.tag.identifier }}"><code>{{ row.tag.identifier }}</code></a></td>
         <td>{% if row.provisioned %}<span class="badge mqtt-badge-applied">Nos arquivos</span><span class="cell-detail">Usuário: <code>{{ row.mqtt_username }}</code><br>Tópicos: <code>spt/{{ row.mqtt_username }}/config</code> e <code>spt/{{ row.mqtt_username }}/status</code></span>{% else %}<span class="badge">Sem acesso</span>{% endif %}</td>
         <td><span class="badge mqtt-badge-{{ row.state }}" data-live-field="state">{{ row.label }}</span></td>
+        <td>Atual: <strong>#<span data-live-field="sequence">{{ row.view.sequence }}</span></strong><span class="cell-detail">Publicada: #<span data-live-field="published_sequence">{{ row.view.published_sequence }}</span></span></td>
         <td>Desejada: <code data-live-field="desired">{{ row.tag.desired_version or '—' }}</code><span class="cell-detail">Publicada: <span data-live-field="published">{{ row.tag.published_version or '—' }}</span> · confirmada: <span data-live-field="confirmed">{{ row.tag.confirmed_version or 'Não informada' }}</span></span></td>
-        <td data-live-field="received">{% if row.tag.last_received_at %}{{ row.tag.last_received_at|utc_timestamp }}{% else %}<span class="muted">Nenhum estado recebido</span>{% endif %}</td>
+        <td><span data-live-field="pub_published">{{ row.view.pub_published }}</span><span class="cell-detail"><span data-live-field="pub_reason">{{ row.view.pub_reason }}</span></span></td>
+        <td data-live-field="received">{{ row.view.received }}</td>
         <td>
           {% if row.provisioned %}
           <div class="mqtt-row-actions">

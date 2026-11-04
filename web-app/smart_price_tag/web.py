@@ -1,6 +1,8 @@
 """Server-rendered routes for the management application."""
 
+import json
 import secrets
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,33 +18,49 @@ from . import catalog
 from .authentication import authenticate
 from .broker_admin import BrokerError, BrokerManager
 from .config import Settings
-from .db import AdminUser, Product, Tag, create_tables, make_engine
+from .db import AdminUser, Product, Publication, Tag, create_tables, make_engine
 from .mqtt import MqttService
-from .publisher import configuration_version, content_for_tag
+from .presentation import (
+    battery_status,
+    contact_status,
+    group_hex,
+    local_timestamp,
+    local_with_relative,
+    publication_summary,
+    readable_data,
+    rssi_quality,
+)
+from .publisher import REASONS, configuration_version, content_for_tag, recent_publications
 
 
 ROOT = Path(__file__).parent
 templates = Jinja2Templates(directory=str(ROOT / "templates"))
 templates.env.filters["price"] = catalog.format_price
 templates.env.filters["utc_timestamp"] = catalog.format_utc_timestamp
+templates.env.filters["local_time"] = local_timestamp
 templates.env.filters["utc_input"] = catalog.format_utc_input
+
+# Publications listed in each tag's history panel.
+HISTORY_LIMIT = 8
+# Tags listed with links in the confirmation after a catalog change.
+FLASH_TAG_LIMIT = 10
 
 
 def synchronization_status(session: Session, tag: Tag) -> dict[str, str]:
     """Compare the latest reported content with the catalog, even before MQTT staging."""
     current = configuration_version(content_for_tag(session, tag))
     if tag.last_received_at is None:
-        state, label = "unseen", "Aguardando status da etiqueta"
-        description = "A etiqueta ainda não enviou um status para comparar com a configuração atual."
+        state, label = "unseen", "Etiqueta ainda sem status"
+        description = "A etiqueta ainda não enviou nenhum status, então não dá para saber o que ela exibe."
     elif not tag.confirmed_version:
-        state, label = "unconfirmed", "Sincronização não confirmada"
-        description = "Recebemos um status, mas a etiqueta não informou a versão da configuração."
+        state, label = "unconfirmed", "Versão não informada"
+        description = "O último status chegou sem versão: a etiqueta ainda não aplicou nenhuma configuração ou não informou qual."
     elif tag.confirmed_version == current:
-        state, label = "synced", "Etiqueta sincronizada"
-        description = "A versão do último status recebido corresponde à configuração atual do catálogo."
+        state, label = "synced", "Etiqueta em dia"
+        description = "A versão informada no último status é a mesma do conteúdo atual do catálogo."
     else:
-        state, label = "changed", "Etiqueta não sincronizada"
-        description = "A versão do último status recebido difere da configuração atual. Aguardando atualização da etiqueta."
+        state, label = "changed", "Etiqueta desatualizada"
+        description = "A versão informada no último status difere do conteúdo atual do catálogo. A etiqueta deve atualizar no próximo despertar."
     return {"current": current, "sync_state": state, "sync_label": label, "sync_description": description}
 
 
@@ -89,10 +107,11 @@ def create_app(settings: Settings | None = None, broker_manager: BrokerManager |
     def render(request: Request, template: str, *, status_code: int = 200, **context):
         token = request.session.setdefault("csrf", secrets.token_urlsafe(32))
         flash_message = request.session.pop("flash_message", None)
+        flash_tags = request.session.pop("flash_tags", None)
         return templates.TemplateResponse(
             request=request,
             name=template,
-            context={"csrf_token": token, "flash_message": flash_message, "authenticated": bool(request.session.get("user_id")), **context},
+            context={"csrf_token": token, "flash_message": flash_message, "flash_tags": flash_tags, "authenticated": bool(request.session.get("user_id")), **context},
             status_code=status_code,
         )
 
@@ -101,11 +120,36 @@ def create_app(settings: Settings | None = None, broker_manager: BrokerManager |
             request.session["flash_message"] = message
         return RedirectResponse(path, status_code=303)
 
-    def catalog_changed() -> str:
+    def tag_sequences(*, product_id: int | None = None, identifier: str | None = None) -> dict[str, int]:
+        """Current `seq` of the tags a catalog action can change, read before the action."""
+        with Session(engine) as session:
+            if identifier is not None:
+                tag = session.get(Tag, identifier)
+                return {tag.identifier: tag.sequence} if tag else {}
+            tags = session.exec(select(Tag).where(Tag.product_id == product_id)).all()
+            return {tag.identifier: tag.sequence for tag in tags}
+
+    def catalog_changed(request: Request | None = None, reason: str | None = None, before: dict[str, int] | None = None) -> str:
+        """Stage the change with its reason; list the affected tags in the confirmation."""
         if mqtt_service is None:
             return " MQTT não configurado; alteração salva somente no catálogo."
-        mqtt_service.notify_change()
-        return " Configuração preparada para publicação MQTT; veja a situação em Etiquetas."
+        mqtt_service.notify_change(reason)
+        if before is None or request is None:
+            return " Configuração preparada para publicação MQTT; veja a situação em Etiquetas."
+        if not before:
+            return " Nenhuma etiqueta vinculada; nada a publicar."
+        items = []
+        with Session(engine) as session:
+            for identifier, old_sequence in sorted(before.items()):
+                tag = session.get(Tag, identifier)
+                if tag is not None:
+                    items.append({"identifier": tag.identifier, "seq": tag.sequence, "version": tag.desired_version or "—", "new": tag.sequence > old_sequence})
+        request.session["flash_tags"] = items[:FLASH_TAG_LIMIT]
+        hidden = len(items) - FLASH_TAG_LIMIT
+        more = f" (e mais {hidden})" if hidden > 0 else ""
+        if any(item["new"] for item in items):
+            return f" Nova mensagem assinada para as etiquetas afetadas{more}:"
+        return f" O conteúdo das etiquetas afetadas não mudou; a sequência foi mantida{more}:"
 
     def require_login(request: Request):
         user_id = request.session.get("user_id")
@@ -194,7 +238,7 @@ def create_app(settings: Settings | None = None, broker_manager: BrokerManager |
                 catalog.save_product(session, product_id=None, **values)
         except catalog.CatalogError as error:
             return product_form(request, title="Novo produto", action="/produtos/novo", values=values, error=str(error), status_code=400)
-        return redirect("/produtos", "Produto salvo no catálogo." + catalog_changed(), request)
+        return redirect("/produtos", "Produto salvo no catálogo." + catalog_changed(request, "produto", {}), request)
 
     @app.get("/produtos/{product_id}/editar", response_class=HTMLResponse)
     def edit_product_form(request: Request, product_id: int):
@@ -215,12 +259,13 @@ def create_app(settings: Settings | None = None, broker_manager: BrokerManager |
             return denied
         form = await read_form(request)
         values = {key: str(form.get(key, "")) for key in ("name", "price", "description", "ean13")}
+        before = tag_sequences(product_id=product_id)
         try:
             with Session(engine) as session:
                 catalog.save_product(session, product_id=product_id, **values)
         except catalog.CatalogError as error:
             return product_form(request, title="Editar produto", action=f"/produtos/{product_id}/editar", values=values, error=str(error), status_code=400)
-        return redirect("/produtos", "Produto atualizado no catálogo." + catalog_changed(), request)
+        return redirect("/produtos", "Produto atualizado no catálogo." + catalog_changed(request, "produto", before), request)
 
     @app.post("/produtos/{product_id}/excluir")
     async def delete_product(request: Request, product_id: int):
@@ -257,6 +302,7 @@ def create_app(settings: Settings | None = None, broker_manager: BrokerManager |
             return denied
         form = await read_form(request)
         values = {"price": str(form.get("price", "")), "ends_at": str(form.get("ends_at", ""))}
+        before = tag_sequences(product_id=product_id)
         with Session(engine) as session:
             product = session.get(Product, product_id)
             if product is None:
@@ -265,7 +311,7 @@ def create_app(settings: Settings | None = None, broker_manager: BrokerManager |
                 catalog.save_promotion(session, product_id, **values)
             except catalog.CatalogError as error:
                 return render(request, "promotion_form.html", status_code=400, product=product, values=values, error=str(error))
-        return redirect("/produtos", "Promoção salva no catálogo." + catalog_changed(), request)
+        return redirect("/produtos", "Promoção salva no catálogo." + catalog_changed(request, "promocao", before), request)
 
     @app.post("/produtos/{product_id}/promocao/remover")
     async def remove_promotion(request: Request, product_id: int):
@@ -273,25 +319,133 @@ def create_app(settings: Settings | None = None, broker_manager: BrokerManager |
         if denied:
             return denied
         await read_form(request)
+        before = tag_sequences(product_id=product_id)
         try:
             with Session(engine) as session:
                 catalog.remove_promotion(session, product_id)
         except catalog.CatalogError as error:
             return redirect("/produtos", str(error), request)
-        return redirect("/produtos", "Promoção removida do catálogo." + catalog_changed(), request)
+        return redirect("/produtos", "Promoção removida do catálogo." + catalog_changed(request, "promocao", before), request)
 
     def delivery_state(tag: Tag) -> tuple[str, str]:
+        """Stage of the latest message: Preparada → Publicada → Status recebido → Aplicada."""
         if mqtt_service is None:
             return "pending", "MQTT não configurado"
         if not tag.desired_version or not tag.pending_payload:
-            return "pending", "Preparando publicação"
+            return "pending", "Preparando mensagem"
         if tag.published_sequence != tag.sequence or tag.published_version != tag.desired_version:
-            return "pending", "Publicação pendente"
+            return "pending", "Aguardando envio ao broker"
         if tag.confirmed_version == tag.desired_version and tag.confirmed_sequence == tag.sequence:
-            return "applied", "Aplicada"
+            return "applied", "Aplicada pela etiqueta"
         if tag.last_received_at is not None:
-            return "received", "Estado recebido · aguardando confirmação"
-        return "waiting", "Aguardando primeiro estado"
+            return "received", "Status recebido · versão ainda não confirmada"
+        return "waiting", "No broker · aguardando status da etiqueta"
+
+    def expected_topic(identifier: str) -> str:
+        topic_id = None
+        if mqtt_service is not None and mqtt_service.topic_identifier is not None:
+            try:
+                topic_id = mqtt_service.topic_identifier(identifier)
+            except (BrokerError, catalog.CatalogError):
+                topic_id = None
+        return f"spt/{topic_id or identifier}/config"
+
+    def last_message(tag: Tag, publication: Publication | None) -> Publication | None:
+        """Latest signed message; databases older than the history fall back to the pending payload."""
+        if publication is not None and publication.sequence == tag.sequence:
+            return publication
+        if not tag.pending_payload:
+            return publication
+        try:
+            envelope = json.loads(tag.pending_payload)
+        except json.JSONDecodeError:
+            return publication
+        return Publication(identifier=tag.identifier, sequence=tag.sequence, version=tag.desired_version or "",
+                           data=envelope.get("dados", ""), hmac=envelope.get("hmac", ""), reason="anterior",
+                           prepared_at=0, product_id=tag.product_id)
+
+    def delivery_timeline(tag: Tag, message: Publication | None, state: str, now: int) -> list[dict]:
+        published = state in {"waiting", "received", "applied"}
+        applied = state == "applied"
+        published_at = message.published_at if message else None
+        # delivery_state counts any status; here only one sent after this message's ACK counts.
+        stale_status = published_at is not None and tag.last_received_at is not None and tag.last_received_at < published_at
+        received = applied or (state == "received" and not stale_status)
+        if received:
+            received_time = local_with_relative(tag.last_received_at, now)
+        elif stale_status:
+            received_time = "Último status é anterior a esta publicação"
+        else:
+            received_time = "Aguardando o próximo status da etiqueta"
+        return [
+            {"key": "prepared", "label": "Preparada", "done": message is not None,
+             "time": local_with_relative(message.prepared_at, now) if message and message.prepared_at else ("Antes do histórico" if message else "Nenhuma mensagem preparada")},
+            {"key": "published", "label": "Publicada no broker (ACK)", "done": published,
+             "time": local_with_relative(published_at, now) if published and published_at else ("Confirmada" if published else "Aguardando ACK do broker")},
+            {"key": "received", "label": "Status recebido", "done": received, "time": received_time},
+            {"key": "applied", "label": "Aplicada pela etiqueta", "done": applied,
+             "time": "A etiqueta informou esta versão" if applied
+             else f"Aguardando status com versao {message.version}" if message and message.version else "Aguardando a etiqueta"},
+        ]
+
+    def tag_view(session: Session, tag: Tag, now: int, *, history: bool = True) -> dict:
+        """Everything a tag panel shows; strings so tag_status.js can update the page."""
+        state, label = delivery_state(tag)
+        publications = recent_publications(session, tag.identifier, HISTORY_LIMIT + 1)
+        message = last_message(tag, publications[0] if publications else None)
+        rssi_state, rssi_label = rssi_quality(tag.rssi)
+        battery_state, battery_label = battery_status(tag.battery_mv, settings.battery_low_mv)
+        rejected_recent = tag.rejected_status_at is not None and (tag.last_received_at is None or tag.rejected_status_at >= tag.last_received_at)
+        view = {
+            **synchronization_status(session, tag),
+            **contact_status(tag.last_received_at, now, settings.tag_wake_interval_s, settings.tag_wake_margin_s),
+            "identifier": tag.identifier,
+            "state": state,
+            "label": label,
+            "desired": tag.desired_version or "—",
+            "published": tag.published_version or "—",
+            "confirmed": tag.confirmed_version or "Não informada",
+            "received": local_with_relative(tag.last_received_at, now, "Nenhum estado recebido"),
+            "battery": f"{tag.battery_mv} mV" if tag.battery_mv is not None else "Sem leitura",
+            "battery_state": battery_state,
+            "battery_label": battery_label,
+            "rssi": f"{tag.rssi} dBm" if tag.rssi is not None else "Sem leitura",
+            "rssi_state": rssi_state,
+            "rssi_label": rssi_label,
+            "firmware": tag.firmware or "Sem leitura",
+            "sequence": str(tag.sequence),
+            "published_sequence": str(tag.published_sequence),
+            "rejected_state": "none" if tag.rejected_status_at is None else ("recent" if rejected_recent else "old"),
+            "rejected": "Nenhum status rejeitado" if tag.rejected_status_at is None else (tag.rejected_status_reason or "Motivo não registrado"),
+            "rejected_at": local_with_relative(tag.rejected_status_at, now, ""),
+            "has_publication": message is not None,
+        }
+        if message is not None:
+            published_at = message.published_at if tag.published_sequence == message.sequence else None
+            view.update({
+                "pub_seq": f"seq #{message.sequence}",
+                "pub_version": message.version or "—",
+                "pub_hmac": group_hex(message.hmac),
+                "pub_topic": message.topic or expected_topic(tag.identifier),
+                "pub_reason": REASONS.get(message.reason, "Anterior ao histórico"),
+                "pub_prepared": local_with_relative(message.prepared_at or None, now, "Antes do histórico"),
+                "pub_published": local_with_relative(published_at, now, "Confirmada pelo broker" if tag.published_sequence == message.sequence else "Aguardando ACK do broker"),
+                "pub_republished": local_with_relative(message.republished_at, now, "Nenhum reenvio"),
+                "pub_data": message.data,
+                **readable_data(message.data, now),
+            })
+        else:
+            view.update({key: "—" for key in ("pub_seq", "pub_version", "pub_hmac", "pub_topic", "pub_reason", "pub_prepared",
+                                               "pub_published", "pub_republished", "pub_data", "pub_name", "pub_price",
+                                               "pub_description", "pub_ean13", "pub_promotion")})
+        view["timeline"] = delivery_timeline(tag, message, state, now)
+        if history:
+            shown = publications[:HISTORY_LIMIT]
+            view["history"] = [
+                publication_summary(item, publications[index + 1].data if index + 1 < len(publications) else None, now, superseded=index > 0)
+                for index, item in enumerate(shown)
+            ]
+        return view
 
     def mqtt_page(request: Request, *, error: str | None = None, credentials: dict | None = None, status_code: int = 200):
         with Session(engine) as session:
@@ -309,10 +463,12 @@ def create_app(settings: Settings | None = None, broker_manager: BrokerManager |
 
         counts = {"pending": 0, "waiting": 0, "received": 0, "applied": 0}
         rows = []
-        for tag in tags:
-            state, label = delivery_state(tag)
-            counts[state] += 1
-            rows.append({"tag": tag, "state": state, "label": label, "mqtt_username": accounts.get(tag.identifier), "provisioned": tag.identifier in accounts})
+        now = int(time.time())
+        with Session(engine) as session:
+            for tag in tags:
+                view = tag_view(session, tag, now, history=False)
+                counts[view["state"]] += 1
+                rows.append({"tag": tag, "view": view, "state": view["state"], "label": view["label"], "mqtt_username": accounts.get(tag.identifier), "provisioned": tag.identifier in accounts})
 
         response = render(
             request,
@@ -349,26 +505,15 @@ def create_app(settings: Settings | None = None, broker_manager: BrokerManager |
         denied = require_login(request)
         if denied:
             return denied
+        now = int(time.time())
         with Session(engine) as session:
             tags = session.exec(select(Tag).order_by(Tag.identifier)).all()
             items = []
             counts = {"pending": 0, "waiting": 0, "received": 0, "applied": 0}
             for tag in tags:
-                state, label = delivery_state(tag)
-                counts[state] += 1
-                items.append({
-                    **synchronization_status(session, tag),
-                    "identifier": tag.identifier,
-                    "state": state,
-                    "label": label,
-                    "desired": tag.desired_version or "—",
-                    "published": tag.published_version or "—",
-                    "confirmed": tag.confirmed_version or "Não informada",
-                    "received": catalog.format_utc_timestamp(tag.last_received_at) if tag.last_received_at else "Nenhum estado recebido",
-                    "battery": f"{tag.battery_mv} mV" if tag.battery_mv is not None else "Sem leitura",
-                    "rssi": f"{tag.rssi} dBm" if tag.rssi is not None else "Sem leitura",
-                    "firmware": tag.firmware or "Sem leitura",
-                })
+                view = tag_view(session, tag, now)
+                counts[view["state"]] += 1
+                items.append(view)
         return JSONResponse({"tags": items, "counts": counts}, headers={"Cache-Control": "no-store"})
 
     @app.post("/mqtt/preparar")
@@ -475,10 +620,8 @@ def create_app(settings: Settings | None = None, broker_manager: BrokerManager |
             tags = session.exec(select(Tag).order_by(Tag.identifier)).all()
             products = session.exec(select(Product).order_by(Product.name, Product.id)).all()
             product_names = {product.id: product.name for product in products}
-            tag_rows = []
-            for tag in tags:
-                state, label = delivery_state(tag)
-                tag_rows.append({"tag": tag, "state": state, "label": label, **synchronization_status(session, tag)})
+            now = int(time.time())
+            tag_rows = [{"tag": tag, **tag_view(session, tag, now)} for tag in tags]
         return render(request, "tags.html", status_code=status_code, tag_rows=tag_rows, products=products, product_names=product_names, error=error, identifier=identifier, mqtt_enabled=mqtt_service is not None, broker_connected=bool(mqtt_service and mqtt_service.connected.is_set()))
 
     @app.get("/etiquetas", response_class=HTMLResponse)
@@ -497,10 +640,10 @@ def create_app(settings: Settings | None = None, broker_manager: BrokerManager |
         identifier = str(form.get("identifier", ""))
         try:
             with Session(engine) as session:
-                catalog.register_tag(session, identifier)
+                registered = catalog.register_tag(session, identifier).identifier
         except catalog.CatalogError as error:
             return tag_page(request, error=str(error), identifier=identifier, status_code=400)
-        return redirect("/etiquetas", "Etiqueta cadastrada no catálogo. Provisione o acesso dela na tela MQTT." + catalog_changed(), request)
+        return redirect("/etiquetas", "Etiqueta cadastrada no catálogo. Provisione o acesso dela na tela MQTT." + catalog_changed(request, "cadastro", {registered: 0}), request)
 
     @app.post("/etiquetas/{identifier}/vinculo")
     async def change_link(request: Request, identifier: str):
@@ -511,11 +654,12 @@ def create_app(settings: Settings | None = None, broker_manager: BrokerManager |
         value = str(form.get("product_id", ""))
         if value and (not value.isascii() or not value.isdecimal() or len(value) > 18 or int(value) <= 0):
             return redirect("/etiquetas", "Selecione um produto válido.", request)
+        before = tag_sequences(identifier=identifier)
         try:
             with Session(engine) as session:
                 catalog.link_product(session, identifier, int(value) if value else None)
         except catalog.CatalogError as error:
             return redirect("/etiquetas", str(error), request)
-        return redirect("/etiquetas", "Vínculo salvo no catálogo." + catalog_changed(), request)
+        return redirect("/etiquetas", "Vínculo salvo no catálogo." + catalog_changed(request, "vinculo", before), request)
 
     return app

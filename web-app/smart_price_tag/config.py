@@ -15,6 +15,11 @@ class Settings:
     mqtt_username: str | None = None
     mqtt_password: str | None = None
     mqtt_master_key: bytes | None = None
+    # A tag is "late" when the last status is older than interval + margin (RNF04: 24 h).
+    tag_wake_interval_s: int = 24 * 60 * 60
+    tag_wake_margin_s: int = 60 * 60
+    # Heuristic alert only; the interface never converts voltage into a percentage.
+    battery_low_mv: int = 3500
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -50,6 +55,18 @@ class Settings:
             raise RuntimeError("SPT_MQTT_MASTER_KEY deve conter 32 bytes em hexadecimal.")
         if not 1 <= port <= 65535:
             raise RuntimeError("SPT_MQTT_PORT inválida.")
+        monitoring = {}
+        for variable, field, minimum in (
+            ("SPT_TAG_WAKE_INTERVAL_S", "tag_wake_interval_s", 1),
+            ("SPT_TAG_WAKE_MARGIN_S", "tag_wake_margin_s", 0),
+            ("SPT_BATTERY_LOW_MV", "battery_low_mv", 0),
+        ):
+            value = os.environ.get(variable)
+            if value is None:
+                continue
+            if not value.isascii() or not value.isdecimal() or int(value) < minimum:
+                raise RuntimeError(f"{variable} deve ser um inteiro maior ou igual a {minimum}.")
+            monitoring[field] = int(value)
         return cls(
             database_path=Path(os.environ.get("SPT_DB_PATH", "data/smart_price_tag.db")),
             session_secret=secret,
@@ -59,4 +76,5 @@ class Settings:
             mqtt_username=username,
             mqtt_password=password,
             mqtt_master_key=key,
+            **monitoring,
         )

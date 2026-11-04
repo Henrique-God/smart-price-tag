@@ -13,6 +13,19 @@ class InvalidStatus(ValueError):
     pass
 
 
+def record_rejected_status(session: Session, topic: str, reason: str, rejected_at: int) -> bool:
+    """Keep the last ignored status on its tag, when the topic names a registered tag."""
+    match = re.fullmatch(r"spt/([0-9A-Fa-f]{12})/status", topic)
+    tag = session.get(Tag, match.group(1).upper()) if match else None
+    if tag is None:
+        return False
+    tag.rejected_status_reason = reason[:200]
+    tag.rejected_status_at = rejected_at
+    session.add(tag)
+    session.commit()
+    return True
+
+
 def record_status(session: Session, topic: str, payload: bytes, *, received_at: int | None = None) -> bool:
     match = re.fullmatch(r"spt/([0-9A-Fa-f]{12})/status", topic)
     if not match or len(payload) > 2048:

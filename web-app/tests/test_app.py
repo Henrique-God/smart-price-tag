@@ -93,7 +93,7 @@ def test_tag_synchronization_follows_latest_status_and_current_catalog(client_an
     current = snapshot()["current"]
     report(current)
     assert snapshot()["sync_state"] == "synced"
-    assert snapshot()["sync_label"] == "Etiqueta sincronizada"
+    assert snapshot()["sync_label"] == "Etiqueta em dia"
     assert 'data-sync-state="synced"' in client.get("/etiquetas").text
 
     # With MQTT disabled, staging does not run on edits. Compare to the catalog anyway.

@@ -22,7 +22,16 @@ Dentro de `web-app/`, substitua o caminho do script por `./run-local.sh`. Use o 
 
 A aplicação fica em **http://127.0.0.1:8000**. O script usa `.venv/Scripts/python.exe`, carrega `secrets/session.key`, usa `data/smart_price_tag.db` e a configuração MQTT local. Ele desativa cookies seguros somente para HTTP local. Não é necessário ativar a `.venv` manualmente. Mantenha o terminal aberto e encerre com Ctrl+C.
 
-Para comunicar com as etiquetas, execute em outro terminal, também da raiz:
+No macOS (pyenv ou Homebrew), execute a partir de `web-app/`:
+
+```bash
+./run-local-mac.sh                       # app em http://127.0.0.1:8000 (SPT_PORT muda a porta)
+/opt/homebrew/opt/mosquitto/sbin/mosquitto -c data/broker/mosquitto.conf -v   # broker, em outro terminal
+```
+
+O script usa o venv `~/.venvs/spt` (fora do iCloud; `SPT_VENV` muda o caminho), reinstala dependências quando `requirements.txt` muda e não sobrescreve `data/` nem `secrets/`. Não use `brew services start mosquitto` (porta 1883 com configuração padrão); o broker do projeto usa a porta **1884**. Testes no Mac: `~/.venvs/spt/bin/python -m pytest -q`. Para conferências visuais, suba uma instância separada com banco temporário, `SPT_SESSION_SECRET` sintético e sem conexão ao broker real, em outra porta.
+
+Para comunicar com as etiquetas no Windows, execute em outro terminal, também da raiz:
 
 ```powershell
 & "C:\Program Files\Git\bin\bash.exe" ./web-app/run-broker.sh
@@ -39,7 +48,8 @@ No Git Bash, use `bash web-app/run-broker.sh`. Os scripts atuais são para Windo
 | `smart_price_tag/static/` | CSS compartilhado e JavaScript de atualização de status. |
 | `smart_price_tag/catalog.py` | Regras de produtos, etiquetas, vínculos e promoções. |
 | `smart_price_tag/db.py` | Modelos SQLModel, SQLite e migrações que preservam bancos existentes. |
-| `smart_price_tag/publisher.py` | Conteúdo da configuração, versão por hash, sequência e envelope persistido para publicação. |
+| `smart_price_tag/publisher.py` | Conteúdo da configuração, versão por hash, sequência, envelope persistido e histórico `publicacao` (motivo, preparada/publicada/republicada). |
+| `smart_price_tag/presentation.py` | Formatação para a interface: horários de Brasília e tempo relativo, mensagem legível, HMAC agrupado, diferenças entre versões e rótulos de sinal, bateria e atraso. |
 | `smart_price_tag/mqtt.py` | Conexão, assinatura de status, publicação e republicação MQTT. |
 | `smart_price_tag/monitor.py` | Validação e persistência do último status recebido da etiqueta. |
 | `smart_price_tag/security.py` | Derivação de chaves individuais e assinatura HMAC. |
@@ -57,7 +67,9 @@ No Git Bash, use `bash web-app/run-broker.sh`. Os scripts atuais são para Windo
 
 - Preserve autenticação, CSRF e compatibilidade com bancos existentes. Não altere o contrato MQTT sem atualizar documentação e testes relevantes.
 - Na página de Etiquetas, sincronização compara a versão do **último status recebido** com o hash da configuração **atual do catálogo**, mesmo antes da preparação ou publicação MQTT. Status ausente ou sem versão não confirma sincronização.
-- Mantenha separado o estado de entrega MQTT, que acompanha publicação e confirmação. Um ACK do broker não comprova aplicação na etiqueta; um status não comprova o conteúdo físico do visor nem uma conexão ativa agora.
+- Mantenha separado o estado de entrega MQTT, que acompanha publicação e confirmação. Um ACK do broker não comprova aplicação na etiqueta; um status não comprova o conteúdo físico do visor nem uma conexão ativa agora. A linha do tempo (Preparada → Publicada no broker → Status recebido → Aplicada pela etiqueta) é a referência da entrega; o selo do card responde só se a versão informada pela etiqueta é a do catálogo atual.
+- Cada `seq` novo gera uma linha em `publicacao`; a republicação nunca muda o `seq` nem cria linha, só atualiza `republicada_em`. Ao causar uma mudança no catálogo, passe o motivo para `catalog_changed()`. Não altere o envelope MQTT nem o cálculo de HMAC, versão e `seq`.
+- Exiba horários em America/Sao_Paulo (filtro `local_time` e `presentation.local_with_relative`). A interface pode mostrar `dados` e `hmac`, que já trafegam no broker, mas nunca a chave individual, a mestra ou senhas.
 - Preserve o layout responsivo, navegação por teclado, foco visível e header persistente. Evite porcentagem de bateria sem uma relação validada entre tensão e carga.
 - Execute testes apropriados às alterações. A partir de `web-app/`, use:
 

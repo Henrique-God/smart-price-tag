@@ -20,7 +20,7 @@
         <td>
           {% if product.promotion_price_cents %}
           <strong>R$ {{ product.promotion_price_cents|price }}</strong>
-          <span class="cell-detail">{% if product.promotion_ends_at <= now %}Encerrada em{% else %}Até{% endif %} {{ product.promotion_ends_at|utc_timestamp }}</span>
+          <span class="cell-detail">{% if product.promotion_ends_at <= now %}Encerrada em{% else %}Até{% endif %} {{ product.promotion_ends_at|local_time }}</span>
           {% else %}<span class="muted">Sem promoção</span>{% endif %}
         </td>
         <td>

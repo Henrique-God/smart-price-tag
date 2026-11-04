@@ -10,7 +10,7 @@ from sqlmodel import Session, select
 
 from .config import Settings
 from .db import Tag
-from .monitor import InvalidStatus, record_status
+from .monitor import InvalidStatus, record_rejected_status, record_status
 from .publisher import mark_published, stage_configs
 
 
@@ -55,9 +55,10 @@ class MqttService:
         self.client.disconnect()
         self.client.loop_stop()
 
-    def notify_change(self) -> None:
+    def notify_change(self, reason: str | None = None) -> None:
+        """Stage changed configurations now; `reason` is recorded in the publication history."""
         with self.stage_lock, Session(self.engine) as session:
-            stage_configs(session, self.settings.mqtt_master_key)
+            stage_configs(session, self.settings.mqtt_master_key, reason=reason)
         self.wake.set()
 
     def request_republish(self) -> None:
@@ -70,8 +71,14 @@ class MqttService:
             return self._last_status_issue
 
     def _set_status_issue(self, topic: str, reason: str) -> None:
+        now = int(time.time())
         with self.status_issue_lock:
-            self._last_status_issue = (topic, reason, int(time.time()))
+            self._last_status_issue = (topic, reason, now)
+        try:
+            with Session(self.engine) as session:
+                record_rejected_status(session, topic, reason, now)
+        except Exception:
+            logger.exception("Falha ao registrar o estado ignorado na etiqueta")
 
     def _on_connect(self, client, userdata, flags, reason_code, properties):
         if reason_code.is_failure:
@@ -128,7 +135,8 @@ class MqttService:
                                 continue
                             epoch = self.epoch
                             topic_id = self.topic_identifier(tag.identifier) if self.topic_identifier else None
-                            info = self.client.publish(f"spt/{topic_id or tag.identifier}/config", tag.pending_payload, qos=1, retain=True)
+                            topic = f"spt/{topic_id or tag.identifier}/config"
+                            info = self.client.publish(topic, tag.pending_payload, qos=1, retain=True)
                             if info.rc != mqtt.MQTT_ERR_SUCCESS:
                                 break
                             info.wait_for_publish(timeout=5)
@@ -136,7 +144,7 @@ class MqttService:
                                 accepted = self.publish_results.pop(info.mid, False)
                             if not info.is_published() or not accepted or not self.connected.is_set() or epoch != self.epoch:
                                 break
-                            mark_published(session, tag.identifier, tag.sequence, tag.desired_version)
+                            mark_published(session, tag.identifier, tag.sequence, tag.desired_version, topic=topic)
                             self.sent_epoch[tag.identifier] = epoch
             except Exception:
                 logger.exception("Falha no publicador MQTT; tentativa será repetida")

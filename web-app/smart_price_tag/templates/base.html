@@ -25,7 +25,9 @@
     </div>
   </header>
   <main id="conteudo" class="container main-content">
-    {% if flash_message %}<div class="notice" role="status">{{ flash_message }}</div>{% endif %}
+    {% if flash_message %}<div class="notice" role="status">{{ flash_message }}
+      {% if flash_tags %}<ul class="notice-tags">{% for item in flash_tags %}<li><a href="/etiquetas#tag-{{ item.identifier }}"><code>{{ item.identifier }}</code></a> · seq #{{ item.seq }} · versão <code>{{ item.version }}</code>{% if item.new %} <span class="badge mqtt-badge-applied">nova</span>{% else %} <span class="badge">sem mudança</span>{% endif %}</li>{% endfor %}</ul>{% endif %}
+    </div>{% endif %}
     {% block content %}{% endblock %}
   </main>
   <footer class="site-footer"><div class="container">Catálogo, publicação MQTT e estados das etiquetas · Smart Price Tag</div></footer>
