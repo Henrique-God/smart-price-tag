@@ -38,7 +38,7 @@ templates = Jinja2Templates(directory=str(ROOT / "templates"))
 templates.env.filters["price"] = catalog.format_price
 templates.env.filters["utc_timestamp"] = catalog.format_utc_timestamp
 templates.env.filters["local_time"] = local_timestamp
-templates.env.filters["utc_input"] = catalog.format_utc_input
+templates.env.filters["brasilia_input"] = catalog.format_brasilia_input
 
 # Publications listed in each tag's history panel.
 HISTORY_LIMIT = 8
@@ -291,7 +291,7 @@ def create_app(settings: Settings | None = None, broker_manager: BrokerManager |
                 raise HTTPException(404, "Produto não encontrado.")
             values = {
                 "price": catalog.format_price(product.promotion_price_cents) if product.promotion_price_cents else "",
-                "ends_at": catalog.format_utc_input(product.promotion_ends_at) if product.promotion_ends_at else "",
+                "ends_at": catalog.format_brasilia_input(product.promotion_ends_at) if product.promotion_ends_at else "",
             }
         return render(request, "promotion_form.html", product=product, values=values, error=None)
 

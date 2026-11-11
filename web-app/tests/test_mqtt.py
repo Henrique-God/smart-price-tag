@@ -25,6 +25,7 @@ from smart_price_tag.publisher import serialize, stage_configs
 from smart_price_tag.security import derive_tag_key
 from smart_price_tag import security
 from smart_price_tag.web import create_app
+from smart_price_tag.timezones import BRASILIA
 
 
 MASTER = os.urandom(32)  # ephemeral test key; no deployed key enters source control
@@ -69,7 +70,7 @@ def test_exact_data_hmac_version_and_sequence(tmp_path):
         save_promotion(session, product.id, "9,99", expiry)
         assert stage_configs(session, MASTER) == 1
         promotion_body = json.loads(json.loads(session.get(Tag, TAG_A).pending_payload)["dados"])
-        assert promotion_body["promocao"] == {"preco": 999, "expira_em": int(datetime.strptime(expiry, "%Y-%m-%dT%H:%M").replace(tzinfo=timezone.utc).timestamp())}
+        assert promotion_body["promocao"] == {"preco": 999, "expira_em": int(datetime.strptime(expiry, "%Y-%m-%dT%H:%M").replace(tzinfo=BRASILIA).timestamp())}
         link_product(session, TAG_A, None)
         assert stage_configs(session, MASTER) == 1
         clear_body = json.loads(json.loads(session.get(Tag, TAG_A).pending_payload)["dados"])

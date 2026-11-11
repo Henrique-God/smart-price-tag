@@ -16,6 +16,7 @@ from smart_price_tag.db import AdminUser, Product, Tag
 from smart_price_tag.monitor import record_status
 from smart_price_tag.publisher import stage_configs
 from smart_price_tag.web import create_app
+from smart_price_tag.timezones import BRASILIA
 
 
 TEST_PASSWORD = "example-test-password-123"
@@ -171,7 +172,33 @@ def test_product_validation_crud_and_restart_persistence(client_and_app):
     assert format_price(1320) == "13,20"
 
 
-def test_tags_links_and_utc_promotions(client_and_app):
+def test_product_limits_on_creation_and_edit(client_and_app):
+    client, app = client_and_app
+    add_admin(app)
+    log_in(client)
+    create_path = "/produtos/novo"
+    invalid_values = [
+        {"name": ""}, {"name": " "}, {"name": "N" * 21},
+        {"description": ""}, {"description": "D" * 31},
+        {"price": "0,00"}, {"price": "1000,00"}, {"price": "-0,01"}, {"price": "1,001"},
+    ]
+    for values in invalid_values:
+        assert post_with_csrf(client, create_path, sample_product(**values), create_path).status_code == 400
+    boundary = sample_product(name="N" * 20, description="D" * 30, price="999,99")
+    assert post_with_csrf(client, create_path, boundary, create_path).status_code == 303
+    with Session(app.state.engine) as session:
+        product = session.exec(select(Product)).one()
+        assert product.price_cents == 99999
+        edit_path = f"/produtos/{product.id}/editar"
+    for values in invalid_values:
+        assert post_with_csrf(client, edit_path, sample_product(**values), edit_path).status_code == 400
+    assert post_with_csrf(client, edit_path, sample_product(name="N", price="0.01"), edit_path).status_code == 303
+    with Session(app.state.engine) as session:
+        product = session.exec(select(Product)).one()
+        assert product.name == "N" and product.price_cents == 1
+
+
+def test_tags_links_and_brasilia_promotions(client_and_app):
     client, app = client_and_app
     add_admin(app)
     log_in(client)
@@ -200,7 +227,10 @@ def test_tags_links_and_utc_promotions(client_and_app):
     with Session(app.state.engine) as session:
         product = session.get(Product, product_id)
         assert product.promotion_price_cents == 999
-        assert product.promotion_ends_at == int(datetime.strptime(future, "%Y-%m-%dT%H:%M").replace(tzinfo=timezone.utc).timestamp())
+        assert product.promotion_ends_at == int(datetime.strptime(future, "%Y-%m-%dT%H:%M").replace(tzinfo=BRASILIA).timestamp())
+    form = client.get(f"/produtos/{product_id}/promocao")
+    assert f'value="{future}"' in form.text
+    assert "horário de Brasília" in form.text
     assert post_with_csrf(client, f"/produtos/{product_id}/promocao", {"price": "8,50", "ends_at": future}, f"/produtos/{product_id}/promocao").status_code == 303
     with Session(app.state.engine) as session:
         assert session.get(Product, product_id).promotion_price_cents == 850

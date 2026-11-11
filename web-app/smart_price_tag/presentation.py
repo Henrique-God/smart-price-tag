@@ -4,19 +4,12 @@ Pure functions over stored values; no database access and no secrets.
 """
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 
 from .catalog import format_price
 from .db import Publication
 from .publisher import REASONS
-
-try:
-    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-
-    BRASILIA = ZoneInfo("America/Sao_Paulo")
-except (ImportError, ZoneInfoNotFoundError):  # Windows without the tzdata package
-    # Brazil has not used daylight saving time since 2019.
-    BRASILIA = timezone(timedelta(hours=-3), "BRT")
+from .timezones import BRASILIA
 
 # Heuristic thresholds, documented in README: not a link-quality measurement.
 RSSI_GOOD_DBM = -67

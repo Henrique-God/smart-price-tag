@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from .db import Product, Tag
+from .timezones import BRASILIA
 
 
 class CatalogError(ValueError):
@@ -19,8 +20,8 @@ def parse_price_cents(value: str) -> int:
         raise CatalogError("Informe o preço com duas casas decimais, por exemplo 12,90.")
     whole, cents = re.split(r"[,.]", value)
     result = int(whole) * 100 + int(cents)
-    if result <= 0:
-        raise CatalogError("O preço deve ser maior que zero.")
+    if not 1 <= result <= 99999:
+        raise CatalogError("O preço deve ser de R$ 0,01 a R$ 999,99.")
     return result
 
 
@@ -63,10 +64,10 @@ def get_tag(session: Session, identifier: str) -> Tag:
 def save_product(session: Session, *, product_id: int | None, name: str, price: str, description: str, ean13: str) -> Product:
     name = name.strip()
     description = description.strip()
-    if not 1 <= len(name) <= 120:
-        raise CatalogError("O nome deve ter de 1 a 120 caracteres.")
-    if not 1 <= len(description) <= 160:
-        raise CatalogError("A descrição curta deve ter de 1 a 160 caracteres.")
+    if not 1 <= len(name) <= 20:
+        raise CatalogError("O nome deve ter de 1 a 20 caracteres.")
+    if not 1 <= len(description) <= 30:
+        raise CatalogError("A descrição curta deve ter de 1 a 30 caracteres.")
     price_cents = parse_price_cents(price)
     barcode = validate_ean13(ean13)
     existing = session.exec(select(Product).where(Product.ean13 == barcode)).first()
@@ -126,14 +127,14 @@ def save_promotion(session: Session, product_id: int, price: str, ends_at: str, 
     if cents >= product.price_cents:
         raise CatalogError("O preço promocional deve ser menor que o preço normal.")
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}", ends_at):
-        raise CatalogError("Informe data e hora de término em UTC.")
+        raise CatalogError("Informe data e hora de término no horário de Brasília.")
     try:
-        end_time = datetime.strptime(ends_at, "%Y-%m-%dT%H:%M").replace(tzinfo=timezone.utc)
+        end_time = datetime.strptime(ends_at, "%Y-%m-%dT%H:%M").replace(tzinfo=BRASILIA).astimezone(timezone.utc)
     except ValueError as error:
         raise CatalogError("A data de término é inválida.") from error
     now = now or datetime.now(timezone.utc)
     if end_time <= now:
-        raise CatalogError("O término da promoção deve estar no futuro (UTC).")
+        raise CatalogError("O término da promoção deve estar no futuro (horário de Brasília).")
     product.promotion_price_cents = cents
     product.promotion_ends_at = int(end_time.timestamp())
     session.add(product)
@@ -154,5 +155,5 @@ def format_utc_timestamp(timestamp: int) -> str:
     return datetime.fromtimestamp(timestamp, timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
 
 
-def format_utc_input(timestamp: int) -> str:
-    return datetime.fromtimestamp(timestamp, timezone.utc).strftime("%Y-%m-%dT%H:%M")
+def format_brasilia_input(timestamp: int) -> str:
+    return datetime.fromtimestamp(timestamp, BRASILIA).strftime("%Y-%m-%dT%H:%M")
